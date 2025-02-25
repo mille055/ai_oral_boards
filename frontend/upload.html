@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Teaching File - Radiology Teaching File Viewer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">Radiology Teaching Files (Local)</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="index.html">Cases</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="upload.html">Upload</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2>Upload New Teaching File</h2>
+        
+        <div class="alert alert-info">
+            <strong>Note:</strong> This is a local testing version. Files will be stored on your local machine.
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <form id="uploadForm">
+                    <div class="mb-3">
+                        <label for="dicomFolder" class="form-label">DICOM Folder</label>
+                        <input class="form-control" type="file" id="dicomFolder" webkitdirectory directory multiple required>
+                        <div class="form-text">Select a folder containing DICOM files from your computer. All DICOM files in the folder and subfolders will be uploaded.</div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="title" class="form-label">Case Title</label>
+                                <input type="text" class="form-control" id="title" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="anatomy" class="form-label">Anatomy</label>
+                                <select class="form-select" id="anatomy" required>
+                                    <option value="">Select anatomy...</option>
+                                    <option value="Head">Head</option>
+                                    <option value="Neck">Neck</option>
+                                    <option value="Chest">Chest</option>
+                                    <option value="Abdomen">Abdomen</option>
+                                    <option value="Pelvis">Pelvis</option>
+                                    <option value="Spine">Spine</option>
+                                    <option value="Upper Extremity">Upper Extremity</option>
+                                    <option value="Lower Extremity">Lower Extremity</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Case Description</label>
+                        <textarea class="form-control" id="description" rows="2"></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="diagnosis" class="form-label">Diagnosis</label>
+                        <input type="text" class="form-control" id="diagnosis">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="findings" class="form-label">Findings</label>
+                        <textarea class="form-control" id="findings" rows="4"></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="tags" class="form-label">Tags (comma separated)</label>
+                        <input type="text" class="form-control" id="tags" placeholder="e.g. fracture, pediatric, acute">
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary" type="submit">
+                            <span id="uploadBtnText">Upload Teaching File</span>
+                            <span id="uploadSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/upload.js"></script>
+</body>
+</html>

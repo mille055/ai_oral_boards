@@ -1,0 +1,199 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  RUST_VERSION: "1.70.0"
+  AWS_DEFAULT_REGION: "us-east-1"  # Change to your AWS region
+  LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
+  S3_BUCKET: "radiology-teaching-files"
+  DYNAMODB_TABLE: "RadiologyTeachingFiles"
+
+# Cache dependencies between builds
+cache:
+  paths:
+    - .cargo/
+    - target/
+
+before_script:
+  - apt-get update -yqq
+  - apt-get install -yqq curl zip unzip
+  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
+  - source $HOME/.cargo/env
+  - cargo --version
+  - rustc --version
+
+build:
+  stage: build
+  image: rust:latest
+  script:
+    - pip3 install cargo-lambda
+    - cargo lambda build --release
+  artifacts:
+    paths:
+      - target/lambda/radiology-teaching-files/bootstrap
+    expire_in: 1 week
+
+test:
+  stage: test
+  image: rust:latest
+  script:
+    - cargo test
+    - cargo clippy -- -D warnings
+  dependencies:
+    - build
+
+deploy:
+  stage: deploy
+  image: 
+    name: amazon/aws-cli:latest
+    entrypoint: [""]
+  script:
+    # Create zip package
+    - mkdir -p deployment
+    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
+    - cd deployment && zip -j function.zip bootstrap && cd ..
+    
+    # Check if Lambda function already exists
+    - |
+      if aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME >/dev/null 2>&1; then
+        echo "Updating existing Lambda function..."
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --zip-file fileb://deployment/function.zip
+      else
+        echo "Creating new Lambda function..."
+        # Create execution role if it doesn't exist
+        ROLE_ARN=$(aws iam get-role --role-name lambda-radiology-role 2>/dev/null | jq -r '.Role.Arn' || echo "")
+        if [ -z "$ROLE_ARN" ]; then
+          echo "Creating IAM role..."
+          aws iam create-role \
+            --role-name lambda-radiology-role \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+          
+          aws iam attach-role-policy \
+            --role-name lambda-radiology-role \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          
+          aws iam attach-role-policy \
+            --role-name lambda-radiology-role \
+            --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+          
+          aws iam attach-role-policy \
+            --role-name lambda-radiology-role \
+            --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+          
+          # Wait for role to propagate
+          sleep 10
+          ROLE_ARN=$(aws iam get-role --role-name lambda-radiology-role | jq -r '.Role.Arn')
+        fi
+        
+        # Create Lambda function
+        aws lambda create-function \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --runtime provided.al2 \
+          --role $ROLE_ARN \
+          --handler bootstrap \
+          --zip-file fileb://deployment/function.zip \
+          --environment "Variables={RUST_LOG=info,BUCKET_NAME=$S3_BUCKET,DYNAMODB_TABLE=$DYNAMODB_TABLE}" \
+          --memory-size 256 \
+          --timeout 30
+      fi
+    
+    # Create/update REST API Gateway
+    - |
+      # Check if API exists
+      API_ID=$(aws apigateway get-rest-apis | jq -r '.items[] | select(.name=="radiology-api") | .id')
+      if [ -z "$API_ID" ]; then
+        echo "Creating new API Gateway..."
+        API_ID=$(aws apigateway create-rest-api --name radiology-api --endpoint-configuration types=REGIONAL | jq -r '.id')
+      fi
+      
+      # Get root resource ID
+      ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID | jq -r '.items[] | select(.path=="/") | .id')
+      
+      # Create API resources and methods
+      # This is a simplified example - in practice, you would create all resources for your API
+      
+      # Create /api resource if it doesn't exist
+      API_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID | jq -r '.items[] | select(.path=="/api") | .id')
+      if [ -z "$API_RESOURCE_ID" ]; then
+        API_RESOURCE_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part "api" | jq -r '.id')
+      fi
+      
+      # Create /api/cases resource if it doesn't exist
+      CASES_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id $API_ID | jq -r '.items[] | select(.path=="/api/cases") | .id')
+      if [ -z "$CASES_RESOURCE_ID" ]; then
+        CASES_RESOURCE_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $API_RESOURCE_ID --path-part "cases" | jq -r '.id')
+      fi
+      
+      # Create GET method for /api/cases
+      aws apigateway put-method \
+        --rest-api-id $API_ID \
+        --resource-id $CASES_RESOURCE_ID \
+        --http-method GET \
+        --authorization-type NONE || true
+      
+      # Create Lambda integration
+      LAMBDA_ARN="arn:aws:lambda:$AWS_DEFAULT_REGION:$AWS_ACCOUNT_ID:function:$LAMBDA_FUNCTION_NAME"
+      aws apigateway put-integration \
+        --rest-api-id $API_ID \
+        --resource-id $CASES_RESOURCE_ID \
+        --http-method GET \
+        --type AWS_PROXY \
+        --integration-http-method POST \
+        --uri "arn:aws:apigateway:$AWS_DEFAULT_REGION:lambda:path/2015-03-31/functions/$LAMBDA_ARN/invocations" || true
+      
+      # Deploy the API
+      aws apigateway create-deployment \
+        --rest-api-id $API_ID \
+        --stage-name prod || true
+      
+      # Set Lambda permissions
+      aws lambda add-permission \
+        --function-name $LAMBDA_FUNCTION_NAME \
+        --statement-id apigateway-get-cases \
+        --action lambda:InvokeFunction \
+        --principal apigateway.amazonaws.com \
+        --source-arn "arn:aws:execute-api:$AWS_DEFAULT_REGION:$AWS_ACCOUNT_ID:$API_ID/*/GET/api/cases" || true
+      
+      # Output the API endpoint
+      echo "API Gateway endpoint: https://$API_ID.execute-api.$AWS_DEFAULT_REGION.amazonaws.com/prod"
+    
+    # Deploy frontend to S3
+    - |
+      # Create S3 bucket for frontend if it doesn't exist
+      aws s3api head-bucket --bucket $S3_BUCKET-frontend 2>/dev/null || \
+        aws s3 mb s3://$S3_BUCKET-frontend
+      
+      # Configure bucket for static website hosting
+      aws s3 website s3://$S3_BUCKET-frontend --index-document index.html --error-document error.html
+      
+      # Upload frontend files
+      aws s3 sync ./frontend s3://$S3_BUCKET-frontend --delete
+      
+      # Set public read access
+      aws s3api put-bucket-policy \
+        --bucket $S3_BUCKET-frontend \
+        --policy '{
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "PublicReadGetObject",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": "arn:aws:s3:::'$S3_BUCKET'-frontend/*"
+            }
+          ]
+        }'
+      
+      # Output the frontend URL
+      echo "Frontend URL: http://$S3_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
+  dependencies:
+    - build
+  only:
+    - main  # Only deploy when pushing to main branch
+  environment:
+    name: production

@@ -1,0 +1,49 @@
+.image-container {
+    position: relative;
+    overflow: hidden;
+    border-radius: 4px;
+    background-color: #f8f9fa;
+    height: 250px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.case-card {
+    transition: transform 0.2s;
+    height: 100%;
+}
+
+.case-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.tags-container .badge {
+    cursor: pointer;
+}
+
+#caseImage {
+    transition: transform 0.3s;
+}
+
+.zoom-container {
+    overflow: auto;
+    height: 500px;
+    max-width: 100%;
+}
+#dicomContainer {
+    background-color: #000;
+    position: relative;
+}
+
+#dicomViewer {
+    width: 100%;
+    height: 100%;
+    color: white;  /* For text overlay */
+}
+
+.btn-group .active {
+    background-color: #0d6efd !important;
+    color: white !important;
+}

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radiology Teaching File Viewer (Local Testing)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#">Radiology Teaching Files (Local)</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="index.html">Cases</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="upload.html">Upload</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5>Filters</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="modalityFilter" class="form-label">Modality</label>
+                            <select id="modalityFilter" class="form-select">
+                                <option value="">All</option>
+                                <option value="CT">CT</option>
+                                <option value="MR">MR</option>
+                                <option value="XR">XR</option>
+                                <option value="US">US</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="anatomyFilter" class="form-label">Anatomy</label>
+                            <select id="anatomyFilter" class="form-select">
+                                <option value="">All</option>
+                                <option value="Head">Head</option>
+                                <option value="Chest">Chest</option>
+                                <option value="Abdomen">Abdomen</option>
+                                <option value="Extremity">Extremity</option>
+                            </select>
+                        </div>
+                        <button id="applyFilters" class="btn btn-primary">Apply Filters</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-9">
+                <h2>Teaching File Cases</h2>
+                <div id="loadingIndicator" class="text-center my-4 d-none">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+                
+                <div class="row" id="caseContainer">
+                    <!-- Case cards will be dynamically generated here -->
+                </div>
+                
+                <div id="noCasesMessage" class="alert alert-info mt-4 d-none">
+                    No cases available. Add a new case by using the Upload page.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
