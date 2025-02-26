@@ -49,6 +49,12 @@ deploy:
     - yum update -y
     - yum install -y zip unzip
   script:
+    # Check if the S3 bucket exists
+    - if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
+        aws s3 mb s3://$S3_BUCKET;
+      fi
+    # Upload frontend files to S3
+    - aws s3 sync ./frontend/build s3://$S3_BUCKET --delete 
     # Create zip package
     - mkdir -p deployment
     - cp target/lambda/radiology-teaching-files/bootstrap deployment/
