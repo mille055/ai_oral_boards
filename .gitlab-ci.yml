@@ -13,17 +13,23 @@ build-test:
   image: rust:slim
   before_script:
     - apt-get update -qy
-    - apt-get install -y curl jq wget zip unzip musl-tools
+    - apt-get install -y curl jq wget zip unzip musl-tools build-essential
     # Install cross-compilation tools for ARM64
-    - rustup target add aarch64-unknown-linux-musl
+    - apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+    - rustup target add aarch64-unknown-linux-gnu
+    
+    # Set up cross-compilation environment variables
+    - export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+    - export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+    - export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
   stage: build-test
   script:
-    # Build specifically for ARM64 Lambda using musl (static linking)
-    - RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target aarch64-unknown-linux-musl
+    # Build specifically for ARM64 Lambda
+    - cargo build --release --target aarch64-unknown-linux-gnu
     
     # Create the Lambda bootstrap file
     - mkdir -p target/lambda/radiology-teaching-files
-    - cp target/aarch64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/aarch64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
+    - cp target/aarch64-unknown-linux-gnu/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/aarch64-unknown-linux-gnu/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
     
     # Verify the binary is built for the correct architecture
