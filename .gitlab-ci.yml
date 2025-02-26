@@ -5,8 +5,6 @@ stages:
 
 variables:
   RUST_VERSION: "1.70.0"
-  CARGO_LAMBDA_VERSION: "1.6.0"  # Current stable version
-  ZIG_VERSION: "0.11.0"  # Add Zig version for cross-compilation
   AWS_DEFAULT_REGION: "us-east-1"  # Change to your AWS region
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
@@ -24,7 +22,7 @@ cache:
 
 before_script:
   - apt-get update -yqq
-  - apt-get install -yqq curl zip unzip jq wget xz-utils build-essential
+  - apt-get install -yqq curl zip unzip jq wget xz-utils build-essential python3 python3-pip
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
   - export PATH="$HOME/.cargo/bin:$PATH"
   - export CARGO_HOME="${CI_PROJECT_DIR}/.cargo"
@@ -33,17 +31,42 @@ before_script:
   - rustc --version
   
   # Install Zig (for cross-compilation)
-  - wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz
-  - tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz
-  - mv zig-linux-x86_64-${ZIG_VERSION}/zig /usr/local/bin
+  - wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+  - tar -xf zig-linux-x86_64-0.11.0.tar.xz
+  - mv zig-linux-x86_64-0.11.0/zig /usr/local/bin
   - zig version
   
-  # Install cargo-lambda binary directly
-  - wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v${CARGO_LAMBDA_VERSION}/cargo-lambda-v${CARGO_LAMBDA_VERSION}.x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz
-  - tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
-  - mv /tmp/cargo-lambda ${CARGO_HOME}/bin/cargo-lambda
-  - chmod +x ${CARGO_HOME}/bin/cargo-lambda
-  - cargo lambda --version
+  # Try multiple ways to install cargo-lambda
+  - |
+    echo "Attempting to install cargo-lambda using pip3..."
+    pip3 install cargo-lambda
+    
+    if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
+      echo "pip3 installation failed, trying cargo install..."
+      cargo install cargo-lambda || true
+    fi
+    
+    if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
+      echo "cargo install failed, trying to download binary directly..."
+      mkdir -p ${CARGO_HOME}/bin
+      
+      # Try with version 1.6.0
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/latest/download/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.6.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.5.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      echo "Failed to download cargo-lambda binary"
+      
+      if [ -f /tmp/cargo-lambda.tar.gz ]; then
+        tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
+        if [ -f /tmp/cargo-lambda ]; then
+          mv /tmp/cargo-lambda ${CARGO_HOME}/bin/
+          chmod +x ${CARGO_HOME}/bin/cargo-lambda
+        fi
+      fi
+    fi
+  
+  # Verify installation
+  - cargo lambda --version || echo "cargo-lambda is not properly installed. This will likely cause build failures."
 
 build:
   stage: build
