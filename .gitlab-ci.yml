@@ -1,10 +1,11 @@
 stages:
-  - build
-  - test
+  - build-test
   - deploy
 
 variables:
-  RUST_VERSION: "1.76.0"  # Updated to a more recent version
+  RUST_VERSION: "stable"
+  ZIG_VERSION: "0.10.0"
+  CARGO_LAMBDA_VERSION: "v0.17.0"  # Using a known working version
   AWS_DEFAULT_REGION: "us-east-1"
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
@@ -19,25 +20,38 @@ cache:
     - .cargo/
     - target/
 
-before_script:
-  - apt-get update -yqq
-  - apt-get install -yqq curl zip unzip wget jq
-  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
-  - export PATH="$HOME/.cargo/bin:$PATH"
-  - cargo --version
-  - rustc --version
-
-build:
-  stage: build
-  image: rust:1.76-slim
+build-test:
+  image: ubuntu:latest
+  before_script:
+    - apt-get update -qy
+    - apt-get install -y curl jq wget xz-utils build-essential zip unzip
+  stage: build-test
   script:
-    # Build using standard cargo
-    - cargo build --release
+    # Install Rust
+    - curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain $RUST_VERSION
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - rustc --version
     
-    # Create the Lambda bootstrap file manually
-    - mkdir -p target/lambda/radiology-teaching-files
-    - find target/release -type f -executable -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap
-    - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    # Install Zig
+    - wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+    - tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz  
+    - mv zig-linux-x86_64-${ZIG_VERSION}/zig /usr/local/bin
+    - zig version
+    
+    # Install cargo-lambda
+    - mkdir -p ~/.cargo/bin
+    - wget https://github.com/cargo-lambda/cargo-lambda/releases/download/${CARGO_LAMBDA_VERSION}/cargo-lambda-${CARGO_LAMBDA_VERSION}.x86_64-unknown-linux-musl.tar.gz -O /tmp/cargo-lambda.tar.gz
+    - tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
+    - find /tmp -name "cargo-lambda" -type f -exec cp {} ~/.cargo/bin/ \;
+    - chmod +x ~/.cargo/bin/cargo-lambda
+    - cargo lambda --version
+    
+    # Run tests
+    - cargo test
+    - cargo clippy -- -D warnings
+    
+    # Build Lambda
+    - cargo lambda build --release
     
     # Verify the bootstrap file exists
     - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
@@ -45,15 +59,6 @@ build:
     paths:
       - target/lambda/radiology-teaching-files/bootstrap
     expire_in: 1 week
-
-test:
-  stage: test
-  image: rust:latest
-  script:
-    - cargo test
-    - cargo clippy -- -D warnings
-  dependencies:
-    - build
 
 deploy:
   stage: deploy
@@ -203,7 +208,7 @@ deploy:
       # Output the frontend URL
       echo "Frontend URL: http://$S3_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
   dependencies:
-    - build
+    - build-test
   only:
     - main  # Only deploy when pushing to main branch
   environment:
