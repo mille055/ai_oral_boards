@@ -5,14 +5,13 @@ stages:
 
 variables:
   RUST_VERSION: "1.70.0"
-  AWS_DEFAULT_REGION: "us-east-1"  # Change to your AWS region
+  AWS_DEFAULT_REGION: "us-east-1"
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
   LAMBDA_FUNCTION_ARN: "arn:aws:lambda:us-east-1:083702193891:function:radiology-teaching-files"
   LAMBDA_FUNCTION_URL: "https://pvhymfafqoym6f7uj4wj4dzsh40bprml.lambda-url.us-east-1.on.aws/"
   API_BASE_URL: "https://pvhymfafqoym6f7uj4wj4dzsh40bprml.lambda-url.us-east-1.on.aws/api"
-  
 
 # Cache dependencies between builds
 cache:
@@ -22,69 +21,26 @@ cache:
 
 before_script:
   - apt-get update -yqq
-  - apt-get install -yqq curl zip unzip jq wget xz-utils build-essential python3 python3-pip
+  - apt-get install -yqq curl zip unzip wget jq
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
   - export PATH="$HOME/.cargo/bin:$PATH"
-  - export CARGO_HOME="${CI_PROJECT_DIR}/.cargo"
-  - export PATH="${CARGO_HOME}/bin:$PATH"
   - cargo --version
   - rustc --version
-  
-  # Install Zig (for cross-compilation)
-  - wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
-  - tar -xf zig-linux-x86_64-0.11.0.tar.xz
-  - mv zig-linux-x86_64-0.11.0/zig /usr/local/bin
-  - zig version
-  
-  # Try multiple ways to install cargo-lambda
-  - |
-    # Try with cargo install first (most reliable for Rust tools)
-    echo "Attempting to install cargo-lambda using cargo..."
-    cargo install cargo-lambda || true
-    
-    if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
-      echo "cargo install failed, trying pip3 with virtual environment..."
-      # Create a Python virtual environment to avoid externally-managed-environment error
-      apt-get install -y python3-venv
-      python3 -m venv /tmp/venv
-      source /tmp/venv/bin/activate
-      pip3 install --upgrade pip
-      pip3 install cargo-lambda
-      # If installed to venv, copy it to a location in PATH
-      if [ -f /tmp/venv/bin/cargo-lambda ]; then
-        cp /tmp/venv/bin/cargo-lambda ${CARGO_HOME}/bin/
-        chmod +x ${CARGO_HOME}/bin/cargo-lambda
-      fi
-      deactivate
-    fi
-    
-    if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
-      echo "pip3 installation failed, trying to download binary directly..."
-      mkdir -p ${CARGO_HOME}/bin
-      
-      # Attempt to find a working download URL - try multiple formats and versions
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-v0.20.0.x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-0.20.0-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.6.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.5.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
-      echo "Failed to download cargo-lambda binary"
-      
-      if [ -f /tmp/cargo-lambda.tar.gz ]; then
-        tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
-        find /tmp -name "cargo-lambda" -type f -exec cp {} ${CARGO_HOME}/bin/ \;
-        chmod +x ${CARGO_HOME}/bin/cargo-lambda || true
-      fi
-    fi
-  
-  # Verify installation
-  - cargo lambda --version || echo "cargo-lambda is not properly installed. This will likely cause build failures."
 
 build:
   stage: build
   image: rust:latest
   script:
-    - cargo lambda build --release
+    # Build using standard cargo
+    - cargo build --release
+    
+    # Create the Lambda bootstrap file manually
+    - mkdir -p target/lambda/radiology-teaching-files
+    - find target/release -type f -executable -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap
+    - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    
+    # Verify the bootstrap file exists
+    - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/bootstrap
