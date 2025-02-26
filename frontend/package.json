@@ -1,0 +1,13 @@
+{
+    "name": "radiology-teaching-files-frontend",
+    "version": "1.0.0",
+    "description": "Frontend for Radiology Teaching Files",
+    "scripts": {
+      "lint": "eslint js/**/*.js",
+      "build": "echo 'Static build complete'"
+    },
+    "dependencies": {},
+    "devDependencies": {
+      "eslint": "^8.50.0"
+    }
+  }
