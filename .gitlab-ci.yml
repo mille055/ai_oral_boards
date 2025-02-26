@@ -3,6 +3,7 @@ stages:
   - deploy
 
 variables:
+  RUST_VERSION: "stable"
   AWS_DEFAULT_REGION: "us-east-1"
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
@@ -12,56 +13,18 @@ build-test:
   image: rust:slim
   before_script:
     - apt-get update -qy
-    - apt-get install -y curl jq wget zip unzip pkg-config libssl-dev build-essential musl-tools
+    - apt-get install -y curl jq wget zip unzip
     # Install cross-compilation tools
     - rustup target add x86_64-unknown-linux-musl
-    
-    # Install musl-compatible OpenSSL
-    - apt-get install -y musl-dev
-    - OPENSSL_VERSION=1.1.1q
-    - wget https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
-    - tar -xzvf openssl-$OPENSSL_VERSION.tar.gz
-    - cd openssl-$OPENSSL_VERSION
-    - ./Configure no-shared no-async --prefix=/usr/local/musl --openssldir=/usr/local/musl linux-x86_64
-    - make -j$(nproc)
-    - make install
-    - cd ..
-    
-    # Set up environment for cross compilation
-    - export PKG_CONFIG_ALLOW_CROSS=1
-    - export OPENSSL_DIR=/usr/local/musl
-    - export OPENSSL_STATIC=1
   stage: build-test
   script:
-    # Check Rust version
-    - rustc --version
-    - cargo --version
-    
-    # Run tests with default target
-    - cargo test
-    - cargo clippy -- -D warnings || true
-    
     # Build specifically for Lambda using musl (static linking)
-    - cargo build --release --target x86_64-unknown-linux-musl
+    - RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-unknown-linux-musl
     
-    # Create the Lambda bootstrap file manually
+    # Create the Lambda bootstrap file
     - mkdir -p target/lambda/radiology-teaching-files
     - cp target/x86_64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/x86_64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
-    
-    # In case the binary has a different name, try to find it
-    - if [ ! -f target/lambda/radiology-teaching-files/bootstrap ]; then
-        find target/x86_64-unknown-linux-musl/release -type f -perm /111 -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap;
-      fi
-    
-    # Make sure it's executable
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
-    
-    # Check file type to ensure it's a Linux executable
-    - apt-get install -y file
-    - file target/lambda/radiology-teaching-files/bootstrap
-    
-    # Verify the bootstrap file exists
-    - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
@@ -74,70 +37,19 @@ deploy:
     entrypoint: [""]
   before_script:
     - yum update -y
-    - yum install -y zip unzip findutils
+    - yum install -y zip unzip
   script:
-    # Verify bootstrap file exists
-    - ls -la target/lambda/radiology-teaching-files/ || echo "Bootstrap directory not found"
-    - ls -la target/lambda/radiology-teaching-files/bootstrap || echo "Bootstrap file not found"
-    
     # Create zip package
     - mkdir -p deployment
-    - cp target/lambda/radiology-teaching-files/bootstrap deployment/ || echo "Failed to copy bootstrap file"
-    - ls -la deployment/ || echo "Deployment directory not found"
+    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
     - cd deployment && zip -j function.zip bootstrap && cd ..
-    - ls -la deployment/function.zip || echo "Function zip not created"
     
-    # Check if Lambda function already exists
-    - |
-      if aws lambda get-function --function-name $LAMBDA_FUNCTION_NAME >/dev/null 2>&1; then
-        echo "Updating existing Lambda function..."
-        aws lambda update-function-code \
-          --function-name $LAMBDA_FUNCTION_NAME \
-          --zip-file fileb://deployment/function.zip
-      else
-        echo "Creating new Lambda function..."
-        # Create execution role if it doesn't exist
-        ROLE_ARN=$(aws iam get-role --role-name lambda-radiology-role 2>/dev/null | jq -r '.Role.Arn' || echo "")
-        if [ -z "$ROLE_ARN" ]; then
-          echo "Creating IAM role..."
-          aws iam create-role \
-            --role-name lambda-radiology-role \
-            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-          
-          aws iam attach-role-policy \
-            --role-name lambda-radiology-role \
-            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-          
-          aws iam attach-role-policy \
-            --role-name lambda-radiology-role \
-            --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
-          
-          aws iam attach-role-policy \
-            --role-name lambda-radiology-role \
-            --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
-          
-          # Wait for role to propagate
-          sleep 10
-          ROLE_ARN=$(aws iam get-role --role-name lambda-radiology-role | jq -r '.Role.Arn')
-        fi
-        
-        # Create Lambda function
-        aws lambda create-function \
-          --function-name $LAMBDA_FUNCTION_NAME \
-          --runtime provided.al2023 \
-          --role $ROLE_ARN \
-          --handler bootstrap \
-          --zip-file fileb://deployment/function.zip \
-          --environment "Variables={RUST_LOG=info,BUCKET_NAME=$S3_BUCKET,DYNAMODB_TABLE=$DYNAMODB_TABLE}" \
-          --memory-size 256 \
-          --timeout 30
-      fi
-    
-    # Output success message
-    - echo "Lambda function deployed successfully!"
-    # URL might be accessed through API Gateway or Lambda URL if configured
-  dependencies: [build-test]
+    # Update Lambda function
+    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://deployment/function.zip
+
+  dependencies:
+    - build-test
   only:
-    - main  # Only deploy when pushing to main branch
+    - main
   environment:
     name: production
