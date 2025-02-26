@@ -3,7 +3,6 @@ stages:
   - deploy
 
 variables:
-  RUST_VERSION: "stable"
   AWS_DEFAULT_REGION: "us-east-1"
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
@@ -14,38 +13,43 @@ build-test:
   before_script:
     - apt-get update -qy
     - apt-get install -y curl jq wget zip unzip pkg-config libssl-dev build-essential
+    # Install cross-compilation tools
+    - rustup target add x86_64-unknown-linux-musl
+    - apt-get install -y musl-tools
   stage: build-test
   script:
     # Check Rust version
     - rustc --version
     - cargo --version
     
-    # Run tests
+    # Run tests with default target
     - cargo test
     - cargo clippy -- -D warnings || true
     
-    # Build Lambda
-    - cargo build --release
+    # Build specifically for Lambda using musl (static linking)
+    - cargo build --release --target x86_64-unknown-linux-musl
     
     # Create the Lambda bootstrap file manually
     - mkdir -p target/lambda/radiology-teaching-files
-    - ls -la target/release
-    - cp target/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap || echo "Could not find executable with expected name"
-    - chmod +x target/lambda/radiology-teaching-files/bootstrap || echo "Could not set executable permissions"
+    - cp target/x86_64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/x86_64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
     
-    # Fallback: if the specific file copy fails, try to find any executable
+    # In case the binary has a different name, try to find it
     - if [ ! -f target/lambda/radiology-teaching-files/bootstrap ]; then
-        echo "Trying alternate method to find executable";
-        find target/release -type f -perm /111 -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap;
-        chmod +x target/lambda/radiology-teaching-files/bootstrap || true;
+        find target/x86_64-unknown-linux-musl/release -type f -perm /111 -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap;
       fi
+    
+    # Make sure it's executable
+    - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    
+    # Check file type to ensure it's a Linux executable
+    - apt-get install -y file
+    - file target/lambda/radiology-teaching-files/bootstrap
     
     # Verify the bootstrap file exists
     - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
-      - target/release/
     expire_in: 1 week
 
 deploy:
@@ -105,7 +109,7 @@ deploy:
         # Create Lambda function
         aws lambda create-function \
           --function-name $LAMBDA_FUNCTION_NAME \
-          --runtime provided.al2 \
+          --runtime provided.al2023 \
           --role $ROLE_ARN \
           --handler bootstrap \
           --zip-file fileb://deployment/function.zip \
@@ -114,10 +118,10 @@ deploy:
           --timeout 30
       fi
     
-    # Deploy API Gateway or other AWS resources as needed
-    - echo "Deployed Lambda function successfully"
-  dependencies:
-    - build-test
+    # Output success message
+    - echo "Lambda function deployed successfully!"
+    # URL might be accessed through API Gateway or Lambda URL if configured
+  dependencies: [build-test]
   only:
     - main  # Only deploy when pushing to main branch
   environment:
