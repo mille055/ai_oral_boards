@@ -22,18 +22,18 @@ cache:
 
 before_script:
   - apt-get update -yqq
-  - apt-get install -yqq curl zip unzip
+  - apt-get install -yqq curl zip unzip python3 python3-pip
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
   - export PATH="$HOME/.cargo/bin:$PATH"
   - cargo --version
   - rustc --version
-  - cargo install cargo-lambda 
+  # Install cargo-lambda using pip instead of cargo
+  - pip3 install cargo-lambda
 
 build:
   stage: build
   image: rust:latest
   script:
-    - pip3 install cargo-lambda
     - cargo lambda build --release
   artifacts:
     paths:
@@ -189,13 +189,13 @@ deploy:
               "Effect": "Allow",
               "Principal": "*",
               "Action": "s3:GetObject",
-              "Resource": "arn:aws:s3:::'$S3_BUCKET'-frontend/*"
+              "Resource": "arn:aws:s3:::'$S5_BUCKET'-frontend/*"
             }
           ]
         }'
       
       # Output the frontend URL
-      echo "Frontend URL: http://$S3_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
+      echo "Frontend URL: http://$S5_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
   dependencies:
     - build
   only:
