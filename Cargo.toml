@@ -3,6 +3,12 @@ name = "radiology-teaching-files"
 version = "0.1.0"
 edition = "2021"
 
+# Including frontend files in the package
+[package.metadata.lambda.deploy]
+additional-files = [
+    { source = "frontend", destination = "frontend" }
+]
+
 [dependencies]
 lambda_runtime = "0.8.3"
 tokio = { version = "1", features = ["full"] }

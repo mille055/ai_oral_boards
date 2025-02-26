@@ -6,6 +6,7 @@ use aws_sdk_s3::Client as S3Client;
 use anyhow::{Context, Result};
 use tracing::{info, error};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use std::path::Path;
 
 mod db;
 mod s3;
@@ -68,6 +69,72 @@ impl Response {
     }
 }
 
+/// Serve static frontend files
+async fn serve_frontend(path: &str) -> Result<Response, Error> {
+    // Map routes to file paths
+    let file_path = match path {
+        "/" | "/index.html" => "frontend/index.html",
+        "/case.html" => "frontend/case.html",
+        "/upload.html" => "frontend/upload.html",
+        "/js/main.js" => "frontend/js/main.js",
+        "/js/case.js" => "frontend/js/case.js",
+        "/js/upload.js" => "frontend/js/upload.js",
+        "/styles.css" => "frontend/styles.css",
+        _ => {
+            info!("Frontend file not found: {}", path);
+            return Ok(Response {
+                status_code: 404,
+                headers: HashMap::from([
+                    ("Content-Type".to_string(), "text/plain".to_string()),
+                    ("Access-Control-Allow-Origin".to_string(), "*".to_string()),
+                ]),
+                is_base64_encoded: false,
+                body: "Not Found".to_string(),
+            });
+        }
+    };
+
+    // Read the file contents
+    match std::fs::read_to_string(file_path) {
+        Ok(content) => {
+            // Determine content type based on file extension
+            let content_type = match Path::new(file_path).extension()
+                .and_then(|ext| ext.to_str()) {
+                Some("html") => "text/html; charset=utf-8",
+                Some("js") => "application/javascript; charset=utf-8",
+                Some("css") => "text/css; charset=utf-8",
+                _ => "text/plain; charset=utf-8",
+            };
+
+            info!("Serving frontend file: {}", file_path);
+
+            // Return the file contents
+            Ok(Response {
+                status_code: 200,
+                headers: HashMap::from([
+                    ("Content-Type".to_string(), content_type.to_string()),
+                    ("Access-Control-Allow-Origin".to_string(), "*".to_string()),
+                ]),
+                is_base64_encoded: false,
+                body: content,
+            })
+        }
+        Err(_) => {
+            info!("Frontend file read error: {}", file_path);
+            // File not found
+            Ok(Response {
+                status_code: 404,
+                headers: HashMap::from([
+                    ("Content-Type".to_string(), "text/plain".to_string()),
+                    ("Access-Control-Allow-Origin".to_string(), "*".to_string()),
+                ]),
+                is_base64_encoded: false,
+                body: "File Not Found".to_string(),
+            })
+        }
+    }
+}
+
 async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error> {
     info!("Lambda function invoked");
     
@@ -82,6 +149,14 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
         "Processing request: {} {} (request_id: {})",
         request.http_method, request.path, context.request_id
     );
+
+    // First, handle frontend file serving for non-API routes
+    if !request.path.starts_with("/api") {
+        match serve_frontend(&request.path).await {
+            Ok(response) => return Ok(response),
+            Err(_) => {} // Continue to API route handling
+        }
+    }
 
     if request.http_method == "OPTIONS" {
         return Ok(Response::new(200, "OK")?);
