@@ -14,16 +14,16 @@ build-test:
   before_script:
     - apt-get update -qy
     - apt-get install -y curl jq wget zip unzip musl-tools
-    # Install cross-compilation tools
-    - rustup target add x86_64-unknown-linux-musl
+    # Install cross-compilation tools for ARM64
+    - rustup target add aarch64-unknown-linux-musl
   stage: build-test
   script:
-    # Build specifically for Lambda using musl (static linking)
-    - RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-unknown-linux-musl
+    # Build specifically for ARM64 Lambda using musl (static linking)
+    - RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target aarch64-unknown-linux-musl
     
     # Create the Lambda bootstrap file
     - mkdir -p target/lambda/radiology-teaching-files
-    - cp target/x86_64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/x86_64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
+    - cp target/aarch64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/aarch64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
     
     # Verify the binary is built for the correct architecture

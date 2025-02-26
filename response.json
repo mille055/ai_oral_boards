@@ -1,1 +1,1 @@
-{"errorType":"Runtime.InvalidEntrypoint","errorMessage":"RequestId: 1bdf188d-4ef5-4122-ab4a-e5d66c59feb7 Error: fork/exec /var/task/bootstrap: exec format error"}
+{"errorType":"Runtime.InvalidEntrypoint","errorMessage":"RequestId: 80e2abd1-ce9b-4da5-8593-62d4d197db13 Error: fork/exec /var/task/bootstrap: exec format error"}
