@@ -44,7 +44,8 @@ build-test:
     - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
   artifacts:
     paths:
-      - target/lambda/radiology-teaching-files/bootstrap
+      - target/lambda/radiology-teaching-files/
+      - target/release/
     expire_in: 1 week
 
 deploy:
@@ -52,11 +53,20 @@ deploy:
   image: 
     name: amazon/aws-cli:latest
     entrypoint: [""]
+  before_script:
+    - yum update -y
+    - yum install -y zip unzip findutils
   script:
+    # Verify bootstrap file exists
+    - ls -la target/lambda/radiology-teaching-files/ || echo "Bootstrap directory not found"
+    - ls -la target/lambda/radiology-teaching-files/bootstrap || echo "Bootstrap file not found"
+    
     # Create zip package
     - mkdir -p deployment
-    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
+    - cp target/lambda/radiology-teaching-files/bootstrap deployment/ || echo "Failed to copy bootstrap file"
+    - ls -la deployment/ || echo "Deployment directory not found"
     - cd deployment && zip -j function.zip bootstrap && cd ..
+    - ls -la deployment/function.zip || echo "Function zip not created"
     
     # Check if Lambda function already exists
     - |
