@@ -5,6 +5,8 @@ stages:
 
 variables:
   RUST_VERSION: "1.70.0"
+  CARGO_LAMBDA_VERSION: "1.0.0"  # Use a stable version that's known to work
+  ZIG_VERSION: "0.11.0"  # Add Zig version for cross-compilation
   AWS_DEFAULT_REGION: "us-east-1"  # Change to your AWS region
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
@@ -22,13 +24,26 @@ cache:
 
 before_script:
   - apt-get update -yqq
-  - apt-get install -yqq curl zip unzip python3 python3-pip
+  - apt-get install -yqq curl zip unzip jq wget xz-utils build-essential
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUST_VERSION
   - export PATH="$HOME/.cargo/bin:$PATH"
+  - export CARGO_HOME="${CI_PROJECT_DIR}/.cargo"
+  - export PATH="${CARGO_HOME}/bin:$PATH"
   - cargo --version
   - rustc --version
-  # Install cargo-lambda using pip instead of cargo
-  - pip3 install cargo-lambda
+  
+  # Install Zig (for cross-compilation)
+  - wget https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+  - tar -xf zig-linux-x86_64-${ZIG_VERSION}.tar.xz
+  - mv zig-linux-x86_64-${ZIG_VERSION}/zig /usr/local/bin
+  - zig version
+  
+  # Install cargo-lambda binary directly
+  - wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v${CARGO_LAMBDA_VERSION}/cargo-lambda-${CARGO_LAMBDA_VERSION}.x86_64-unknown-linux-musl.tar.gz -O /tmp/cargo-lambda.tar.gz
+  - tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
+  - mv /tmp/cargo-lambda ${CARGO_HOME}/bin/cargo-lambda
+  - chmod +x ${CARGO_HOME}/bin/cargo-lambda
+  - cargo lambda --version
 
 build:
   stage: build
@@ -189,13 +204,13 @@ deploy:
               "Effect": "Allow",
               "Principal": "*",
               "Action": "s3:GetObject",
-              "Resource": "arn:aws:s3:::'$S5_BUCKET'-frontend/*"
+              "Resource": "arn:aws:s3:::'$S3_BUCKET'-frontend/*"
             }
           ]
         }'
       
       # Output the frontend URL
-      echo "Frontend URL: http://$S5_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
+      echo "Frontend URL: http://$S3_BUCKET-frontend.s3-website-$AWS_DEFAULT_REGION.amazonaws.com"
   dependencies:
     - build
   only:
