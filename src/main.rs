@@ -15,21 +15,6 @@ mod models;
 
 use models::{Case, ApiResponse, ErrorResponse};
 
-// #[derive(Deserialize)]
-// struct Request {
-//     #[serde(rename = "httpMethod")]
-//     http_method: String,
-//     path: String,
-//     #[serde(rename = "pathParameters")]
-//     #[allow(dead_code)]
-//     path_parameters: Option<HashMap<String, String>>,
-//     #[serde(rename = "queryStringParameters")]
-//     #[allow(dead_code)]
-//     query_parameters: Option<HashMap<String, String>>,
-//     #[serde(rename = "isBase64Encoded")]
-//     is_base64_encoded: Option<bool>,
-//     body: Option<String>,
-// }
 #[derive(Deserialize, Debug)]
 struct Request {
     #[serde(rename = "httpMethod", default)]
@@ -50,7 +35,6 @@ struct Request {
     #[serde(default)]
     body: Option<String>,
 }
-
 
 #[derive(Serialize)]
 struct Response {
@@ -169,28 +153,30 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
     let request = event.payload;
     let context = event.context;
 
-    // Use unwrap_or with default values to handle potential None
-    let http_method = request.http_method.unwrap_or_default();
-    let path = request.path.unwrap_or_default();
+    // First, try to serve frontend files for non-API routes
+    if request.path.as_ref().map_or(false, |p| !p.starts_with("/api")) {
+        if let Some(path) = request.path.as_deref() {
+            match serve_frontend(path).await {
+                Ok(response) => return Ok(response),
+                Err(_) => {} // Continue to other handling if frontend serving fails
+            }
+        }
+    }
 
-    info!(
-        "Processing request: {} {} (request_id: {})",
-        http_method, path, context.request_id
-    );
-
-    if request.http_method == "OPTIONS" {
+    // Check for OPTIONS method
+    if request.http_method.as_deref() == Some("OPTIONS") {
         return Ok(Response::new(200, "OK")?);
     }
 
-    let result = match (request.http_method.as_str(), request.path.as_str()) {
-        ("GET", "/api/cases") => {
+    let result = match (request.http_method.as_deref(), request.path.as_deref()) {
+        (Some("GET"), Some("/api/cases")) => {
             info!("Handling GET /api/cases - Listing all cases");
             let cases = db::list_cases(&dynamodb_client).await?;
             info!("Found {} cases", cases.len());
             Ok::<Response, Error>(Response::new(200, ApiResponse::success(cases)).map_err(anyhow::Error::from)?)
         },
         
-        ("GET", p) if p.starts_with("/api/cases/") && p.split('/').count() == 4 => {
+        (Some("GET"), Some(p)) if p.starts_with("/api/cases/") && p.split('/').count() == 4 => {
             let parts: Vec<&str> = p.split('/').collect();
             let case_id = parts[3];
 
@@ -201,7 +187,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
             }
         },
 
-        ("GET", p) if p.starts_with("/api/cases/") && p.contains("/images/") => {
+        (Some("GET"), Some(p)) if p.starts_with("/api/cases/") && p.contains("/images/") => {
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() < 6 {
                 return Ok(Response::new(400, ErrorResponse::bad_request("Invalid image path"))?);
@@ -227,7 +213,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
                 .into_binary(image_data))
         },
 
-        ("POST", "/api/cases") => {
+        (Some("POST"), Some("/api/cases")) => {
             if let Some(body) = request.body {
                 let decoded_body = if request.is_base64_encoded.unwrap_or(false) {
                     String::from_utf8(BASE64.decode(body)?)?
