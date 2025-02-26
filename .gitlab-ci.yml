@@ -27,7 +27,7 @@ before_script:
   - export PATH="$HOME/.cargo/bin:$PATH"
   - cargo --version
   - rustc --version
-  - cargo install cargo-lambda
+  - cargo install cargo-lambda --version 1.5.0
 
 build:
   stage: build
