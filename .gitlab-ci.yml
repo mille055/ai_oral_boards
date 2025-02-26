@@ -13,7 +13,7 @@ build-test:
   image: rust:slim
   before_script:
     - apt-get update -qy
-    - apt-get install -y curl jq wget zip unzip
+    - apt-get install -y curl jq wget zip unzip musl-tools
     # Install cross-compilation tools
     - rustup target add x86_64-unknown-linux-musl
   stage: build-test
@@ -25,6 +25,10 @@ build-test:
     - mkdir -p target/lambda/radiology-teaching-files
     - cp target/x86_64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/x86_64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    
+    # Verify the binary is built for the correct architecture
+    - apt-get install -y file
+    - file target/lambda/radiology-teaching-files/bootstrap
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
