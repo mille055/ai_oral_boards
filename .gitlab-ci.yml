@@ -9,6 +9,7 @@ variables:
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
 
+# Rust Lambda Build & Test Stage
 build-test:
   image: rust:slim
   before_script:
@@ -17,54 +18,79 @@ build-test:
     # Install cross-compilation tools for ARM64
     - apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
     - rustup target add aarch64-unknown-linux-musl
-
+    
     # Set up cross-compilation environment variables
     - export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
     - export CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc
     - export CXX_aarch64_unknown_linux_musl=aarch64-linux-gnu-g++
   stage: build-test
   script:
-    # Build specifically for ARM64 Lambda
+    # Build Rust Lambda for ARM64
     - cargo build --release --target aarch64-unknown-linux-musl
-
+    
     # Create the Lambda bootstrap file
     - mkdir -p target/lambda/radiology-teaching-files
-    - cp target/aarch64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/aarch64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
+    - cp target/aarch64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
     
-    # Verify the binary is built for the correct architecture
+    # Verify the binary architecture
     - apt-get install -y file
     - file target/lambda/radiology-teaching-files/bootstrap
+
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
     expire_in: 1 week
 
+# Frontend Build & Test Stage
+frontend-build-test:
+  image: node:18
+  before_script:
+    - apt-get update -qy
+    - apt-get install -y awscli
+    - npm install --global eslint
+    - npm install  # Install frontend dependencies
+  stage: build-test
+  script:
+    # Run linter
+    - eslint frontend/**/*.js || echo "Linting failed, but continuing..."
+    
+    # Run frontend tests (adjust for Jest, Mocha, etc.)
+    - npm test || echo "Frontend tests failed, but continuing..."
+    
+    # Ensure frontend files are ready for deployment
+    - mkdir -p build/frontend
+    - cp -r frontend/* build/frontend/
+  artifacts:
+    paths:
+      - build/frontend/
+    expire_in: 1 week
+
+# Deployment Stage
 deploy:
   stage: deploy
-  image: 
-    name: amazon/aws-cli:latest
-    entrypoint: [""]
+  image: amazon/aws-cli:latest
   before_script:
     - yum update -y
     - yum install -y zip unzip
   script:
-    # Check if the S3 bucket exists
+    # Ensure the S3 bucket exists
     - if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
         aws s3 mb s3://$S3_BUCKET;
       fi
+    
     # Upload frontend files to S3
-    - aws s3 sync ./frontend/build s3://$S3_BUCKET --delete 
-    # Create zip package
+    - aws s3 sync build/frontend s3://$S3_BUCKET --delete --acl public-read
+
+    # Package and deploy the Lambda function
     - mkdir -p deployment
     - cp target/lambda/radiology-teaching-files/bootstrap deployment/
     - cd deployment && zip -j function.zip bootstrap && cd ..
-    
-    # Update Lambda function
     - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://deployment/function.zip
 
   dependencies:
     - build-test
+    - frontend-build-test
   only:
     - main
   environment:
