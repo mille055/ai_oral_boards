@@ -38,30 +38,42 @@ before_script:
   
   # Try multiple ways to install cargo-lambda
   - |
-    echo "Attempting to install cargo-lambda using pip3..."
-    pip3 install cargo-lambda
+    # Try with cargo install first (most reliable for Rust tools)
+    echo "Attempting to install cargo-lambda using cargo..."
+    cargo install cargo-lambda || true
     
     if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
-      echo "pip3 installation failed, trying cargo install..."
-      cargo install cargo-lambda || true
+      echo "cargo install failed, trying pip3 with virtual environment..."
+      # Create a Python virtual environment to avoid externally-managed-environment error
+      apt-get install -y python3-venv
+      python3 -m venv /tmp/venv
+      source /tmp/venv/bin/activate
+      pip3 install --upgrade pip
+      pip3 install cargo-lambda
+      # If installed to venv, copy it to a location in PATH
+      if [ -f /tmp/venv/bin/cargo-lambda ]; then
+        cp /tmp/venv/bin/cargo-lambda ${CARGO_HOME}/bin/
+        chmod +x ${CARGO_HOME}/bin/cargo-lambda
+      fi
+      deactivate
     fi
     
     if ! command -v cargo-lambda >/dev/null 2>&1 && ! command -v cargo lambda >/dev/null 2>&1; then
-      echo "cargo install failed, trying to download binary directly..."
+      echo "pip3 installation failed, trying to download binary directly..."
       mkdir -p ${CARGO_HOME}/bin
       
-      # Try with version 1.6.0
-      wget https://github.com/cargo-lambda/cargo-lambda/releases/latest/download/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      # Attempt to find a working download URL - try multiple formats and versions
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-v0.20.0.x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
+      wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v0.20.0/cargo-lambda-0.20.0-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
       wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.6.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
       wget https://github.com/cargo-lambda/cargo-lambda/releases/download/v1.5.0/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz -O /tmp/cargo-lambda.tar.gz || \
       echo "Failed to download cargo-lambda binary"
       
       if [ -f /tmp/cargo-lambda.tar.gz ]; then
         tar -xzvf /tmp/cargo-lambda.tar.gz -C /tmp
-        if [ -f /tmp/cargo-lambda ]; then
-          mv /tmp/cargo-lambda ${CARGO_HOME}/bin/
-          chmod +x ${CARGO_HOME}/bin/cargo-lambda
-        fi
+        find /tmp -name "cargo-lambda" -type f -exec cp {} ${CARGO_HOME}/bin/ \;
+        chmod +x ${CARGO_HOME}/bin/cargo-lambda || true
       fi
     fi
   
