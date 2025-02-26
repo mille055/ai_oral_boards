@@ -29,8 +29,16 @@ build-test:
     
     # Create the Lambda bootstrap file manually
     - mkdir -p target/lambda/radiology-teaching-files
-    - find target/release -type f -executable -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap
-    - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    - ls -la target/release
+    - cp target/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap || echo "Could not find executable with expected name"
+    - chmod +x target/lambda/radiology-teaching-files/bootstrap || echo "Could not set executable permissions"
+    
+    # Fallback: if the specific file copy fails, try to find any executable
+    - if [ ! -f target/lambda/radiology-teaching-files/bootstrap ]; then
+        echo "Trying alternate method to find executable";
+        find target/release -type f -perm /111 -not -name "*.d" | head -1 | xargs -I{} cp {} target/lambda/radiology-teaching-files/bootstrap;
+        chmod +x target/lambda/radiology-teaching-files/bootstrap || true;
+      fi
     
     # Verify the bootstrap file exists
     - ls -la target/lambda/radiology-teaching-files/bootstrap || (echo "Bootstrap file not found, build failed" && exit 1)
