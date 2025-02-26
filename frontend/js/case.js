@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const caseId = urlParams.get('id');
     
     // API base URL - this will be your API Gateway URL when deployed
-    const API_BASE_URL = 'https://your-api-gateway-id.execute-api.your-region.amazonaws.com/prod';
+    const API_BASE_URL = 'https://pvhymfafqoym6f7uj4wj4dzsh40bprml.lambda-url.us-east-1.on.aws';
     
     if (!caseId) {
         showCaseNotFound();
