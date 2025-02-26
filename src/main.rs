@@ -1,4 +1,4 @@
-use lambda_runtime::{run, service_fn, Error, LambdaEvent};
+use lambda_runtime::{run, service_fn, LambdaEvent, Error as LambdaError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
@@ -75,7 +75,15 @@ impl Response {
 }
 
 /// Serve static frontend files
-async fn serve_frontend(path: &str) -> Result<Response, Error> {
+async fn serve_frontend(path: &str) -> Result<Response, LambdaError> {
+    println!("Attempting to serve frontend file for path: {}", path);
+    
+    // Current working directory logging
+    let current_dir = std::env::current_dir()
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|_| "Could not determine current directory".to_string());
+    println!("Current working directory: {}", current_dir);
+
     // Map routes to file paths
     let file_path = match path {
         "/" | "/index.html" => "frontend/index.html",
@@ -86,7 +94,7 @@ async fn serve_frontend(path: &str) -> Result<Response, Error> {
         "/js/upload.js" => "frontend/js/upload.js",
         "/styles.css" => "frontend/styles.css",
         _ => {
-            info!("Frontend file not found: {}", path);
+            println!("Frontend file not found: {}", path);
             return Ok(Response {
                 status_code: 404,
                 headers: HashMap::from([
@@ -111,7 +119,7 @@ async fn serve_frontend(path: &str) -> Result<Response, Error> {
                 _ => "text/plain; charset=utf-8",
             };
 
-            info!("Serving frontend file: {}", file_path);
+            println!("Serving frontend file: {}", file_path);
 
             // Return the file contents
             Ok(Response {
@@ -124,8 +132,8 @@ async fn serve_frontend(path: &str) -> Result<Response, Error> {
                 body: content,
             })
         }
-        Err(_) => {
-            info!("Frontend file read error: {}", file_path);
+        Err(e) => {
+            println!("Frontend file read error: {} - {}", file_path, e);
             // File not found
             Ok(Response {
                 status_code: 404,
@@ -134,104 +142,138 @@ async fn serve_frontend(path: &str) -> Result<Response, Error> {
                     ("Access-Control-Allow-Origin".to_string(), "*".to_string()),
                 ]),
                 is_base64_encoded: false,
-                body: "File Not Found".to_string(),
+                body: format!("File Not Found: {}", e),
             })
         }
     }
 }
 
-async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error> {
-    info!("Lambda function invoked");
+async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, LambdaError> {
+    // EXTREMELY VERBOSE LOGGING
+    println!("FULL EVENT DUMP: {:?}", event);
     
-    // Log the raw event for debugging
-    info!("Received event: {:?}", event.payload);
+    // Log raw payload details with more context
+    let request = event.payload;
     
+    // Log payload details
+    println!("DIAGNOSTIC INFO:");
+    println!("HTTP METHOD: {:?}", request.http_method);
+    println!("PATH: {:?}", request.path);
+    println!("BODY: {:?}", request.body);
+    println!("PATH PARAMETERS: {:?}", request.path_parameters);
+    println!("QUERY PARAMETERS: {:?}", request.query_parameters);
+
     let config = aws_config::load_from_env().await;
     let dynamodb_client = DynamoDbClient::new(&config);
     let s3_client = S3Client::new(&config);
     
-    let request = event.payload;
-    let context = event.context;
+    // Extract method and path with fallback
+    let http_method = request.http_method.as_deref().unwrap_or("UNKNOWN");
+    let path = request.path.as_deref().unwrap_or("/");
 
-    // First, try to serve frontend files for non-API routes
-    if request.path.as_ref().map_or(false, |p| !p.starts_with("/api")) {
-        if let Some(path) = request.path.as_deref() {
-            match serve_frontend(path).await {
-                Ok(response) => return Ok(response),
-                Err(_) => {} // Continue to other handling if frontend serving fails
+    println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
+
+    // Attempt to handle frontend files first
+    if !path.starts_with("/api") {
+        match serve_frontend(path).await {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                println!("Frontend serving error: {:?}", e);
             }
         }
     }
 
-    // Check for OPTIONS method
-    if request.http_method.as_deref() == Some("OPTIONS") {
-        return Ok(Response::new(200, "OK")?);
-    }
-
-    let result = match (request.http_method.as_deref(), request.path.as_deref()) {
-        (Some("GET"), Some("/api/cases")) => {
-            info!("Handling GET /api/cases - Listing all cases");
-            let cases = db::list_cases(&dynamodb_client).await?;
-            info!("Found {} cases", cases.len());
-            Ok::<Response, Error>(Response::new(200, ApiResponse::success(cases)).map_err(anyhow::Error::from)?)
+    // Main routing logic with extensive logging
+    let result = match (http_method, path) {
+        ("GET", "/api/cases") => {
+            println!("Matched GET /api/cases route");
+            let cases = db::list_cases(&dynamodb_client).await
+                .map_err(|e| LambdaError::from(e))?;
+            println!("Found {} cases", cases.len());
+            Ok(Response::new(200, ApiResponse::success(cases))
+                .map_err(|e| LambdaError::from(e))?)
         },
         
-        (Some("GET"), Some(p)) if p.starts_with("/api/cases/") && p.split('/').count() == 4 => {
+        ("GET", p) if p.starts_with("/api/cases/") && p.split('/').count() == 4 => {
+            println!("Matched GET single case route");
             let parts: Vec<&str> = p.split('/').collect();
             let case_id = parts[3];
-
-            let case = db::get_case(&dynamodb_client, case_id).await?;
+            println!("Fetching case with ID: {}", case_id);
+            
+            let case = db::get_case(&dynamodb_client, case_id).await
+                .map_err(|e| LambdaError::from(e))?;
             match case {
-                Some(case) => Ok(Response::new(200, ApiResponse::success(case))?),
-                None => Ok(Response::new(404, ErrorResponse::not_found("Case not found"))?),
+                Some(case) => Ok(Response::new(200, ApiResponse::success(case))
+                    .map_err(|e| LambdaError::from(e))?),
+                None => Ok(Response::new(404, ErrorResponse::not_found("Case not found"))
+                    .map_err(|e| LambdaError::from(e))?),
             }
         },
 
-        (Some("GET"), Some(p)) if p.starts_with("/api/cases/") && p.contains("/images/") => {
+        ("GET", p) if p.starts_with("/api/cases/") && p.contains("/images/") => {
+            println!("Matched GET case images route");
             let parts: Vec<&str> = p.split('/').collect();
-            if parts.len() < 6 {
-                return Ok(Response::new(400, ErrorResponse::bad_request("Invalid image path"))?);
+            if parts.len() >= 6 {
+                let case_id = parts[3];
+                let image_id = parts[5];
+                
+                println!("Fetching image: case_id={}, image_id={}", case_id, image_id);
+                
+                let case = match db::get_case(&dynamodb_client, case_id).await
+                    .map_err(|e| LambdaError::from(e))? {
+                    Some(case) => case,
+                    None => return Ok(Response::new(404, ErrorResponse::not_found("Case not found"))
+                        .map_err(|e| LambdaError::from(e))?),
+                };
+                
+                if !case.image_ids.contains(&image_id.to_string()) {
+                    return Ok(Response::new(404, ErrorResponse::not_found("Image not found in case"))
+                        .map_err(|e| LambdaError::from(e))?);
+                }
+                
+                let s3_key = format!("dicom/{}/{}.dcm", case_id, image_id);
+                let image_data = s3::download_file(&s3_client, &s3_key).await
+                    .map_err(|e| LambdaError::from(e))?;
+                
+                Ok(Response::new(200, "OK")
+                    .map_err(|e| LambdaError::from(e))?
+                    .with_content_type("application/dicom")
+                    .into_binary(image_data))
+            } else {
+                println!("Invalid image route: {}", p);
+                Ok(Response::new(400, ErrorResponse::bad_request("Invalid image path"))
+                    .map_err(|e| LambdaError::from(e))?)
             }
-            
-            let case_id = parts[3];
-            let image_id = parts[5];
-            
-            let case = match db::get_case(&dynamodb_client, case_id).await? {
-                Some(case) => case,
-                None => return Ok(Response::new(404, ErrorResponse::not_found("Case not found"))?),
-            };
-            
-            if !case.image_ids.contains(&image_id.to_string()) {
-                return Ok(Response::new(404, ErrorResponse::not_found("Image not found in case"))?);
-            }
-            
-            let s3_key = format!("dicom/{}/{}.dcm", case_id, image_id);
-            let image_data = s3::download_file(&s3_client, &s3_key).await?;
-            
-            Ok(Response::new(200, "OK")?
-                .with_content_type("application/dicom")
-                .into_binary(image_data))
         },
 
-        (Some("POST"), Some("/api/cases")) => {
+        ("POST", "/api/cases") => {
+            println!("Matched POST /api/cases route");
             if let Some(body) = request.body {
+                println!("Received body: {}", body);
+                
                 let decoded_body = if request.is_base64_encoded.unwrap_or(false) {
-                    String::from_utf8(BASE64.decode(body)?)?
+                    String::from_utf8(BASE64.decode(body)
+                        .map_err(|e| LambdaError::from(e))?)
+                        .map_err(|e| LambdaError::from(e))?
                 } else {
                     body
                 };
                 
-                let case_upload: models::CaseUpload = serde_json::from_str(&decoded_body)
-                    .context("Failed to parse case upload data")?;
+                println!("Decoded body: {}", decoded_body);
                 
-                let dicom_data = BASE64.decode(&case_upload.dicom_file)?;
+                let case_upload: models::CaseUpload = serde_json::from_str(&decoded_body)
+                    .map_err(|e| LambdaError::from(e))?;
+                
+                let dicom_data = BASE64.decode(&case_upload.dicom_file)
+                    .map_err(|e| LambdaError::from(e))?;
                 let metadata = dicom::extract_metadata(&dicom_data)
-                    .context("Failed to extract DICOM metadata")?;
+                    .map_err(|e| LambdaError::from(e))?;
                 
                 let case_id = uuid::Uuid::new_v4().to_string();
                 
                 let s3_key = format!("dicom/{}/{}.dcm", case_id, metadata.sop_instance_uid);
-                s3::upload_file(&s3_client, &s3_key, dicom_data).await?;
+                s3::upload_file(&s3_client, &s3_key, dicom_data).await
+                    .map_err(|e| LambdaError::from(e))?;
                 
                 let case = Case {
                     case_id: case_id.clone(),
@@ -246,28 +288,30 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
                     created_at: chrono::Utc::now().to_rfc3339(),
                 };
                 
-                db::save_case(&dynamodb_client, &case).await?;
-                Ok(Response::new(201, ApiResponse::success(case))?)
+                db::save_case(&dynamodb_client, &case).await
+                    .map_err(|e| LambdaError::from(e))?;
+                Ok(Response::new(201, ApiResponse::success(case))
+                    .map_err(|e| LambdaError::from(e))?)
             } else {
-                Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
+                println!("Missing request body");
+                Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))
+                    .map_err(|e| LambdaError::from(e))?)
             }
         },
 
-        _ => Ok(Response::new(404, ErrorResponse::not_found("Route not found"))?),
+        _ => {
+            println!("UNMATCHED ROUTE: method={}, path={}", http_method, path);
+            Ok(Response::new(404, ErrorResponse::not_found(
+                &format!("Route not found: {} {}", http_method, path)))
+                .map_err(|e| LambdaError::from(e))?)
+        }
     };
 
-    match result {
-        Ok(response) => Ok::<Response, lambda_runtime::Error>(response),  
-        Err(err) => {
-            error!("Error processing request: {:?}", err);
-            let error_response = Response::new(500, ErrorResponse::server_error(format!("{:?}", err)))?;
-            Ok::<Response, lambda_runtime::Error>(error_response)  
-        }
-    }    
+    result
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), LambdaError> {
     tracing_subscriber::fmt()
         .with_ansi(false)
         .without_time()
