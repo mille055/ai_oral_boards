@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Case {
     pub case_id: String,
     pub title: String,
@@ -18,6 +18,7 @@ pub struct Case {
 pub struct CaseUpload {
     pub title: String,
     pub description: String,
+    pub modality: String,  // Ensure modality is included
     pub anatomy: String,
     pub diagnosis: String,
     pub findings: String,
@@ -26,7 +27,7 @@ pub struct CaseUpload {
     pub dicom_file: String,  // Base64 encoded DICOM file
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CaseMetadata {
     pub case_id: String,
     pub title: String,
@@ -34,7 +35,7 @@ pub struct CaseMetadata {
     pub anatomy: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DicomMetadata {
     pub sop_instance_uid: String,
     pub study_instance_uid: String,
@@ -52,6 +53,8 @@ pub struct DicomMetadata {
 pub struct ApiResponse<T> {
     pub success: bool,
     pub data: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,6 +69,7 @@ impl<T> ApiResponse<T> {
         Self {
             success: true,
             data,
+            error: None,
         }
     }
 }
@@ -94,6 +98,7 @@ impl ErrorResponse {
             error_code: "SERVER_ERROR".to_string(),
         }
     }
+
     #[allow(dead_code)]
     pub fn not_implemented(message: &str) -> Self {
         Self {
