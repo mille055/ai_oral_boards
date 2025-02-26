@@ -15,21 +15,42 @@ mod models;
 
 use models::{Case, ApiResponse, ErrorResponse};
 
-#[derive(Deserialize)]
+// #[derive(Deserialize)]
+// struct Request {
+//     #[serde(rename = "httpMethod")]
+//     http_method: String,
+//     path: String,
+//     #[serde(rename = "pathParameters")]
+//     #[allow(dead_code)]
+//     path_parameters: Option<HashMap<String, String>>,
+//     #[serde(rename = "queryStringParameters")]
+//     #[allow(dead_code)]
+//     query_parameters: Option<HashMap<String, String>>,
+//     #[serde(rename = "isBase64Encoded")]
+//     is_base64_encoded: Option<bool>,
+//     body: Option<String>,
+// }
+#[derive(Deserialize, Debug)]
 struct Request {
-    #[serde(rename = "httpMethod")]
-    http_method: String,
-    path: String,
-    #[serde(rename = "pathParameters")]
-    #[allow(dead_code)]
+    #[serde(rename = "httpMethod", default)]
+    http_method: Option<String>,
+    
+    #[serde(rename = "path", default)]
+    path: Option<String>,
+    
+    #[serde(rename = "pathParameters", default)]
     path_parameters: Option<HashMap<String, String>>,
-    #[serde(rename = "queryStringParameters")]
-    #[allow(dead_code)]
+    
+    #[serde(rename = "queryStringParameters", default)]
     query_parameters: Option<HashMap<String, String>>,
-    #[serde(rename = "isBase64Encoded")]
+    
+    #[serde(rename = "isBase64Encoded", default)]
     is_base64_encoded: Option<bool>,
+    
+    #[serde(default)]
     body: Option<String>,
 }
+
 
 #[derive(Serialize)]
 struct Response {
@@ -138,6 +159,9 @@ async fn serve_frontend(path: &str) -> Result<Response, Error> {
 async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error> {
     info!("Lambda function invoked");
     
+    // Log the raw event for debugging
+    info!("Received event: {:?}", event.payload);
+    
     let config = aws_config::load_from_env().await;
     let dynamodb_client = DynamoDbClient::new(&config);
     let s3_client = S3Client::new(&config);
@@ -145,18 +169,14 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Error
     let request = event.payload;
     let context = event.context;
 
+    // Use unwrap_or with default values to handle potential None
+    let http_method = request.http_method.unwrap_or_default();
+    let path = request.path.unwrap_or_default();
+
     info!(
         "Processing request: {} {} (request_id: {})",
-        request.http_method, request.path, context.request_id
+        http_method, path, context.request_id
     );
-
-    // First, handle frontend file serving for non-API routes
-    if !request.path.starts_with("/api") {
-        match serve_frontend(&request.path).await {
-            Ok(response) => return Ok(response),
-            Err(_) => {} // Continue to API route handling
-        }
-    }
 
     if request.http_method == "OPTIONS" {
         return Ok(Response::new(200, "OK")?);
