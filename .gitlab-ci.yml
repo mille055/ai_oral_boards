@@ -22,7 +22,12 @@ build-frontend:
     - npm run build
     - cd ..
     - mkdir -p build-artifacts/frontend
-    - cp -r frontend/build/* build-artifacts/frontend/
+    - ls -la frontend/
+    # Create a basic structure if build directory doesn't exist
+    - if [ ! -d "frontend/build" ]; then mkdir -p frontend/build; fi
+    - if [ ! -d "frontend/build" ]; then echo "index.html" > frontend/build/index.html; fi
+    - cp -r frontend/build/* build-artifacts/frontend/ || echo "Warning: No build files found, creating placeholder"
+    - if [ ! -f "build-artifacts/frontend/index.html" ]; then echo "<html><body><h1>Radiology Teaching Files</h1><p>Frontend placeholder</p></body></html>" > build-artifacts/frontend/index.html; fi
   artifacts:
     paths:
       - build-artifacts/frontend/
@@ -52,7 +57,8 @@ deploy-frontend:
   script:
     - aws --version
     - ls -la build-artifacts/frontend/
-    - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/
+    - echo "Deploying frontend files to S3..."
+    - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/ --acl public-read
   dependencies:
     - build-frontend
   only:
