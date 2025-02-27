@@ -52,6 +52,7 @@ deploy:
   image: amazon/aws-cli  # ✅ Use AWS CLI image for S3 upload
   script:
     # ✅ Upload frontend files to "frontend/" folder in S3
+    - aws --version
     - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/ --delete
 
     # ✅ Deploy the backend Lambda function
