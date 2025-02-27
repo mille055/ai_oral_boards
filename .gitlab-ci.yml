@@ -51,6 +51,7 @@ deploy:
   # dependencies:
   image: amazon/aws-cli  # ✅ Use AWS CLI image for S3 upload
   script:
+    - which aws
     - aws --version  # ✅ Check AWS CLI version
     - ls -R frontend/build/  # ✅ Ensure build files exist
     - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/ 
