@@ -22,7 +22,10 @@ build-frontend:
     - npm run build
     - cd ..
     - mkdir -p build-artifacts/frontend
+    - echo "✅ Listing frontend directory after build:"
     - ls -la frontend/
+    - echo "✅ Checking frontend/build directory:"
+    - ls -la frontend/build/
     # Create a basic structure if build directory doesn't exist
     - |
       if [ ! -d "frontend/build" ]; then 
@@ -48,8 +51,11 @@ build-backend:
   image: ghcr.io/cargo-lambda/cargo-lambda:latest # ✅ Pre-built Lambda Rust image
   script:
     - cargo lambda build --release --arm64
+    - echo "✅ Listing Lambda build output:"
+    - ls -lah target/lambda/
     - mkdir -p build-artifacts/lambda
     - cp -r target/lambda/* build-artifacts/lambda/
+    - ls -lah build-artifacts/lambda/
   artifacts:
     paths:
       - build-artifacts/lambda/
@@ -63,9 +69,12 @@ deploy-frontend:
   image: amazon/aws-cli
   script:
     - aws --version
-    - ls -la build-artifacts/frontend/
-    - echo "Deploying frontend files to S3..."
+    - echo "✅ Checking frontend artifacts before deployment:"
+    - ls -lah build-artifacts/frontend/
+    - echo "✅ Deploying frontend files to S3..."
     - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/ --acl public-read
+    - echo "✅ S3 deployment complete. Verifying upload:"
+    - aws s3 ls s3://$S3_BUCKET/frontend/
   dependencies:
     - build-frontend
   only:
@@ -80,7 +89,10 @@ deploy-backend:
   stage: deploy
   image: ghcr.io/cargo-lambda/cargo-lambda:latest
   script:
-    - ls -la build-artifacts/lambda/
+    - echo "✅ Checking backend artifacts before deployment:"
+    - ls -lah build-artifacts/lambda/
+    #- if [ ! -f build-artifacts/lambda/radiology-teaching-files/bootstrap ]; then echo "❌ ERROR: No Lambda bootstrap binary found!"; exit 1; fi
+    - echo "✅ Found Lambda binary, proceeding with deployment..."
     - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
   dependencies:
     - build-backend
