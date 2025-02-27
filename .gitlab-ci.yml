@@ -31,104 +31,21 @@ build-frontend:
 # -------------------------------------
 build-backend:
   stage: build
-  image: rust:slim
-  before_script:
-    - apt-get update -qy
-    - apt-get install -y curl wget zip unzip file xz-utils
-
-    # ✅ Install Zig
-    - wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
-    - tar -xf zig-linux-x86_64-0.11.0.tar.xz
-    - mv zig-linux-x86_64-0.11.0 /usr/local/zig
-    - export PATH="/usr/local/zig:$PATH"
-
-    # ✅ Install cargo-lambda
-    - rustup update
-    - cargo install cargo-lambda --locked
-
-    # ✅ Ensure correct Rust target for AWS Lambda (ARM64)
-    - rustup target add aarch64-unknown-linux-gnu
-    - rustup show
-
+  image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Pre-built Lambda Rust image
   script:
-    # ✅ Debugging Information
-    - rustc --version
-    - cargo --version
-    - cargo lambda --version
-    - zig version
-
-    # ✅ Build for AWS Lambda (ARM64)
-    - cargo lambda build --release --target=aarch64-unknown-linux-gnu
-
-    # ✅ Debugging: Show the output of the build
-    - echo "Target/lambda directory contents:"
-    - find target/lambda -type f
-
-    # ✅ Find and copy the bootstrap binary (Avoiding duplication error)
-    - |
-      BOOTSTRAP_SOURCE=$(find target/lambda -name bootstrap | head -n 1)
-      if [ -z "$BOOTSTRAP_SOURCE" ]; then
-        echo "❌ ERROR: No bootstrap binary found"
-        exit 1
-      fi
-
-      echo "✅ Found bootstrap at: $BOOTSTRAP_SOURCE"
-      
-      # Create destination directory if needed
-      mkdir -p target/lambda/radiology-teaching-files
-      
-      # Ensure we don't copy the same file to itself
-      if [ "$BOOTSTRAP_SOURCE" != "target/lambda/radiology-teaching-files/bootstrap" ]; then
-        cp -v "$BOOTSTRAP_SOURCE" target/lambda/radiology-teaching-files/bootstrap
-      fi
-
-      # ✅ Verify the copy worked
-      ls -lh target/lambda/radiology-teaching-files/bootstrap
-
-    # ✅ Ensure executable permissions
-    - chmod +x target/lambda/radiology-teaching-files/bootstrap
-
-    # ✅ Check binary architecture
-    - file target/lambda/radiology-teaching-files/bootstrap
+    - cargo lambda build --release  # ✅ Automatically handles targets
 
   artifacts:
     paths:
-      - target/lambda/radiology-teaching-files/
-      - frontend/build/
+      - target/lambda/
     expire_in: 1 week
-  dependencies:
-    - build-frontend
-
 # -------------------------------------
 # 📌 Deployment to AWS Lambda & S3
 # -------------------------------------
 deploy:
   stage: deploy
-  image: amazon/aws-cli:latest
-  before_script:
-    - yum update -y
-    - yum install -y zip unzip
   script:
-    # ✅ Ensure S3 bucket exists
-    - |
-      if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
-        aws s3 mb s3://$S3_BUCKET
-      fi
-
-    # ✅ Sync frontend build files to S3
-    - aws s3 sync frontend/build s3://$S3_BUCKET --delete
-
-    # ✅ Prepare deployment package
-    - mkdir -p deployment/frontend
-    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
-    - cp -r frontend/build/* deployment/frontend/
-    - cd deployment
-    - zip -r ../function.zip .
-    - cd ..
-
-    # ✅ Deploy Lambda function
-    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://function.zip
-
+    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
   dependencies:
     - build-backend
   only:
