@@ -1,75 +1,69 @@
-stages:
-  - build-frontend
-  - build-backend
-  - deploy
-
-variables:
-  RUST_VERSION: "stable"
-  AWS_DEFAULT_REGION: "us-east-1"
-  LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
-  S3_BUCKET: "radiology-teaching-files"
-  DYNAMODB_TABLE: "RadiologyTeachingFiles"
-
-# Frontend Build (unchanged)
-build-frontend:
-  image: node:18
-  before_script:
-    - cd frontend
-    - npm install
-  script:
-    - npm run lint
-    - npm run build
-  artifacts:
-    paths:
-      - frontend/build/
-    expire_in: 1 week
-  stage: build-frontend
-
-# Backend (Rust) Build
 build-backend:
-  image: rust:latest
+  image: rust:slim
   before_script:
+    - echo "Starting Rust Lambda build process"
+    - echo "Current environment:"
+    - env
+    - echo "Operating System details:"
+    - cat /etc/os-release
+    - echo "Rust version:"
+    - rustc --version
+    - echo "Cargo version:"
+    - cargo --version
+    
+    # Update and install dependencies
     - apt-get update -qy
-    - apt-get install -y zip unzip
+    - apt-get install -y curl zip unzip file
+
+    # Install cargo-lambda
+    - echo "Installing cargo-lambda"
+    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-lambda/cargo-lambda/main/install.sh | sh
+    
+    # Rust toolchain setup
+    - echo "Setting up Rust toolchain"
+    - rustup update
     - rustup target add aarch64-unknown-linux-gnu
+    
+    # Print out target information
+    - echo "Installed Rust targets:"
+    - rustup target list
+  
   script:
-    # Use cargo-lambda for easier Lambda deployment
-    - cargo install cargo-lambda
-    - cargo lambda build --release
+    # Detailed build process logging
+    - echo "Starting cargo build"
+    - echo "Current directory contents:"
+    - ls -la
+    
+    # Build with verbose output
+    - cargo lambda build --release --verbose
+    
+    # Verify build artifacts
+    - echo "Checking build artifacts:"
+    - ls -la target/lambda/radiology-teaching-files/
+    
+    # Binary verification
+    - echo "Verifying bootstrap binary:"
+    - file target/lambda/radiology-teaching-files/bootstrap
+    - ldd target/lambda/radiology-teaching-files/bootstrap || echo "Dynamic linking check not supported"
+    
+    # Size and permissions check
+    - echo "Bootstrap binary details:"
+    - stat target/lambda/radiology-teaching-files/bootstrap
+    
+    # Copy and prepare artifacts
     - mkdir -p target/lambda/radiology-teaching-files
     - cp target/lambda/radiology-teaching-files/bootstrap target/lambda/radiology-teaching-files/
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    
+    # Final verification
+    - echo "Final bootstrap binary check:"
     - file target/lambda/radiology-teaching-files/bootstrap
+  
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
     expire_in: 1 week
+    when: always  # Ensure artifacts are saved even if the job fails
+  
   dependencies:
     - build-frontend
-
-# Deployment
-deploy:
-  stage: deploy
-  image: amazon/aws-cli:latest
-  before_script:
-    - yum update -y
-    - yum install -y zip unzip
-  script:
-    # Ensure S3 bucket exists
-    - if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
-        aws s3 mb s3://$S3_BUCKET;
-      fi
-    # Upload frontend files
-    - aws s3 sync frontend/build s3://$S3_BUCKET --delete
-    # Package and deploy the Lambda function
-    - mkdir -p deployment
-    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
-    - cd deployment && zip -j function.zip bootstrap && cd ..
-    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://deployment/function.zip
-  dependencies:
-    - build-frontend
-    - build-backend
-  only:
-    - main
-  environment:
-    name: production
