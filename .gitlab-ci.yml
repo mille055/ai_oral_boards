@@ -23,9 +23,10 @@ build-frontend:
     - cd ..
     - mkdir -p build-artifacts/frontend
     - echo "✅ Listing frontend directory after build:"
-    - ls -la frontend/
+    - ls -lah frontend/
     - echo "✅ Checking frontend/build directory:"
-    - ls -la frontend/build/
+    #- ls -lah frontend/build/ || echo "⚠️ Warning: frontend/build/ does not exist! Checking alternative directories..."
+    - ls -lah frontend/dist/ || echo 
     # Create a basic structure if build directory doesn't exist
     - |
       if [ ! -d "frontend/build" ]; then 
