@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 // use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_sdk_s3::Client as S3Client;
-use anyhow::{Result};
-use tracing::{error};
+use anyhow::Result;
+use tracing::error;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
 

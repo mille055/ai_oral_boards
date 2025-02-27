@@ -9,6 +9,9 @@ variables:
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
 
+# -------------------------------------
+# 📌 Frontend Build Stage (Node.js)
+# -------------------------------------
 build-frontend:
   stage: build
   image: node:18
@@ -23,67 +26,71 @@ build-frontend:
       - frontend/build/
     expire_in: 1 week
 
+# -------------------------------------
+# 📌 Backend Build Stage (Rust + Lambda)
+# -------------------------------------
 build-backend:
   stage: build
   image: rust:slim
   before_script:
     - apt-get update -qy
     - apt-get install -y curl wget zip unzip file xz-utils
-    
-    # Install Zig
+
+    # ✅ Install Zig
     - wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
     - tar -xf zig-linux-x86_64-0.11.0.tar.xz
     - mv zig-linux-x86_64-0.11.0 /usr/local/zig
     - export PATH="/usr/local/zig:$PATH"
-    
-    # Install cargo-lambda
+
+    # ✅ Install cargo-lambda
     - rustup update
     - cargo install cargo-lambda --locked
-    
+
+    # ✅ Ensure correct Rust target for AWS Lambda (ARM64)
     - rustup target add aarch64-unknown-linux-gnu
-  
+    - rustup show
+
   script:
-    - echo "Current Rust toolchain:"
+    # ✅ Debugging Information
     - rustc --version
-    - echo "Cargo version:"
     - cargo --version
-    - echo "Cargo Lambda version:"
     - cargo lambda --version
-    - echo "Zig version:"
     - zig version
-    
-    # Build for Lambda
-    - cargo lambda build --release
-    
-    # Debug: Detailed directory listing
-    - echo "Detailed target/lambda contents:"
+
+    # ✅ Build for AWS Lambda (ARM64)
+    - cargo lambda build --release --target=aarch64-unknown-linux-gnu
+
+    # ✅ Debugging: Show the output of the build
+    - echo "Target/lambda directory contents:"
     - find target/lambda -type f
-    
-    # Explicitly find and copy the bootstrap binary
+
+    # ✅ Find and copy the bootstrap binary (Avoiding duplication error)
     - |
       BOOTSTRAP_SOURCE=$(find target/lambda -name bootstrap | head -n 1)
       if [ -z "$BOOTSTRAP_SOURCE" ]; then
-        echo "Error: No bootstrap binary found"
+        echo "❌ ERROR: No bootstrap binary found"
         exit 1
       fi
+
+      echo "✅ Found bootstrap at: $BOOTSTRAP_SOURCE"
       
-      echo "Found bootstrap at: $BOOTSTRAP_SOURCE"
-      
-      # Create destination directory if it doesn't exist
+      # Create destination directory if needed
       mkdir -p target/lambda/radiology-teaching-files
       
-      # Copy with verbose output
-      cp -v "$BOOTSTRAP_SOURCE" target/lambda/radiology-teaching-files/bootstrap
-      
-      # Verify the copy
-      ls -l target/lambda/radiology-teaching-files/bootstrap
-    
-    # Ensure executable permissions
+      # Ensure we don't copy the same file to itself
+      if [ "$BOOTSTRAP_SOURCE" != "target/lambda/radiology-teaching-files/bootstrap" ]; then
+        cp -v "$BOOTSTRAP_SOURCE" target/lambda/radiology-teaching-files/bootstrap
+      fi
+
+      # ✅ Verify the copy worked
+      ls -lh target/lambda/radiology-teaching-files/bootstrap
+
+    # ✅ Ensure executable permissions
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
-    
-    - echo "Verifying bootstrap binary:"
+
+    # ✅ Check binary architecture
     - file target/lambda/radiology-teaching-files/bootstrap
-  
+
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
@@ -92,6 +99,9 @@ build-backend:
   dependencies:
     - build-frontend
 
+# -------------------------------------
+# 📌 Deployment to AWS Lambda & S3
+# -------------------------------------
 deploy:
   stage: deploy
   image: amazon/aws-cli:latest
@@ -99,18 +109,26 @@ deploy:
     - yum update -y
     - yum install -y zip unzip
   script:
+    # ✅ Ensure S3 bucket exists
     - |
       if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
         aws s3 mb s3://$S3_BUCKET
       fi
+
+    # ✅ Sync frontend build files to S3
     - aws s3 sync frontend/build s3://$S3_BUCKET --delete
+
+    # ✅ Prepare deployment package
     - mkdir -p deployment/frontend
     - cp target/lambda/radiology-teaching-files/bootstrap deployment/
     - cp -r frontend/build/* deployment/frontend/
     - cd deployment
     - zip -r ../function.zip .
     - cd ..
+
+    # ✅ Deploy Lambda function
     - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://function.zip
+
   dependencies:
     - build-backend
   only:
