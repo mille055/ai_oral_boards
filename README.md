@@ -55,3 +55,113 @@ Read more about invoking the function in [the Cargo Lambda documentation for the
 To deploy the project, run `cargo lambda deploy`. This will create an IAM role and a Lambda function in your AWS account.
 
 Read more about deploying your lambda function in [the Cargo Lambda documentation](https://www.cargo-lambda.info/commands/deploy.html).
+
+
+# Radiology Teaching Files - Rust Lambda Microservice
+
+## 📌 Overview
+This project is a **Rust-based AWS Lambda microservice** that processes radiology teaching files. It includes a **frontend** (React) and a **backend** built in Rust, designed to run efficiently on **AWS Lambda**.
+
+### Features:
+- 🚀 **Serverless Rust microservice** for efficient handling of radiology files.
+- ⚡ **Optimized CI/CD pipeline** for automated deployment.
+- ☁️ **AWS integration**: S3 for storage, DynamoDB for metadata.
+- 🛠️ **Rust toolchain**: Uses `cargo lambda` for building and deploying AWS Lambda functions.
+
+## 🛠️ Prerequisites
+Before setting up, ensure you have:
+- 🦀 [Rust](https://www.rust-lang.org/) (with `cargo`)
+- 📦 [Cargo Lambda](https://github.com/cargo-lambda/cargo-lambda) (`cargo install cargo-lambda`)
+- 🏗️ [Docker](https://www.docker.com/)
+- ☁️ AWS CLI configured with appropriate credentials
+- 🖥️ GitLab CI/CD setup (if using automated deployment)
+
+---
+
+## 🚀 Setup Instructions
+### 1️⃣ Clone the repository
+```sh
+git clone https://gitlab.com/dukeaiml/ids721-spring2025/chad-miniproject5.git
+cd chad-miniproject5
+```
+
+### 2️⃣ Install Dependencies
+```sh
+rustup update
+cargo install cargo-lambda --locked
+```
+
+### 3️⃣ Build for AWS Lambda
+```sh
+cargo lambda build --release --target=aarch64-unknown-linux-gnu
+```
+
+### 4️⃣ Deploy to AWS Lambda
+```sh
+cargo lambda deploy --iam-role <AWS_LAMBDA_ROLE> --region us-east-1 radiology-teaching-files
+```
+
+---
+
+## 📦 CI/CD Pipeline (GitLab)
+The project includes a **GitLab CI/CD pipeline** that automates build & deployment.
+
+### **Pipeline Stages:**
+1. **Build Frontend** (Node.js) → `npm run build`
+2. **Build Backend** (Rust Lambda) → `cargo lambda build`
+3. **Deploy** → `cargo lambda deploy`
+
+### **Pipeline Configuration (`.gitlab-ci.yml`)**
+```yaml
+stages:
+  - build
+  - deploy
+
+deploy:
+  stage: deploy
+  image: ghcr.io/cargo-lambda/cargo-lambda:latest
+  script:
+    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
+  dependencies:
+    - build-backend
+  only:
+    - main
+  environment:
+    name: production
+```
+
+---
+
+## 📂 AWS Services Used
+- **AWS Lambda** - Serverless function execution.
+- **Amazon S3** - File storage for radiology teaching files.
+- **DynamoDB** - Metadata storage.
+- **API Gateway** (Optional) - For exposing REST endpoints.
+
+---
+
+## 🛠️ Troubleshooting
+**Issue:** CI/CD Fails at Deploy 🚨
+- Ensure the deployment stage **uses the correct Docker image (`ghcr.io/cargo-lambda/cargo-lambda:latest`)**.
+- Check if **AWS credentials** are configured properly (`aws sts get-caller-identity`).
+
+**Issue:** `cargo: command not found` ❌
+- Verify the **Docker image used in the CI/CD pipeline** includes `cargo` and `cargo-lambda`.
+
+---
+
+## ✨ Future Enhancements
+- Add **unit tests** using `cargo test`
+- Implement **monitoring** via AWS CloudWatch
+- Extend **API Gateway support** for external integrations
+
+---
+
+## 📜 License
+This project is open-source under the **MIT License**.
+
+---
+
+## 👨‍💻 Author
+Dr. Chad Miller - [Duke Radiology](https://radiology.duke.edu/)
+

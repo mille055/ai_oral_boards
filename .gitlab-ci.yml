@@ -34,7 +34,7 @@ build-backend:
   stage: build
   image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Pre-built Lambda Rust image
   script:
-    - cargo lambda build --release  # ✅ Automatically handles targets
+    - cargo lambda build --release --arm64  # ✅ Automatically handles targets
 
   artifacts:
     paths:
