@@ -51,9 +51,9 @@ deploy:
   # dependencies:
   image: amazon/aws-cli  # ✅ Use AWS CLI image for S3 upload
   script:
-    # ✅ Upload frontend files to "frontend/" folder in S3
-    - aws --version
-    - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/ --delete
+    - aws --version  # ✅ Check AWS CLI version
+    - ls -R frontend/build/  # ✅ Ensure build files exist
+    - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/ 
 
     # ✅ Deploy the backend Lambda function
     - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
