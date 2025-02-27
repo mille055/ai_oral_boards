@@ -10,15 +10,15 @@ variables:
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
 
-# Frontend Build
+# Frontend Build (unchanged)
 build-frontend:
   image: node:18
   before_script:
     - cd frontend
     - npm install
   script:
-    - npm run lint # Ensures JavaScript code quality
-    - npm run build # Builds the frontend assets
+    - npm run lint
+    - npm run build
   artifacts:
     paths:
       - frontend/build/
@@ -27,22 +27,18 @@ build-frontend:
 
 # Backend (Rust) Build
 build-backend:
-  image: rust:slim
+  image: rust:latest
   before_script:
     - apt-get update -qy
-    - apt-get install -y curl jq wget zip unzip musl-tools build-essential
-    - apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross musl-dev musl-tools
-    - rustup target add aarch64-unknown-linux-musl
-    - export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-    - export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
-    - export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-  stage: build-backend
+    - apt-get install -y zip unzip
+    - rustup target add aarch64-unknown-linux-gnu
   script:
-    - cargo build --release --target aarch64-unknown-linux-musl
+    # Use cargo-lambda for easier Lambda deployment
+    - cargo install cargo-lambda
+    - cargo lambda build --release
     - mkdir -p target/lambda/radiology-teaching-files
-    - cp target/aarch64-unknown-linux-musl/release/radiology-teaching-files target/lambda/radiology-teaching-files/bootstrap || cp target/aarch64-unknown-linux-musl/release/radiology_teaching_files target/lambda/radiology-teaching-files/bootstrap
+    - cp target/lambda/radiology-teaching-files/bootstrap target/lambda/radiology-teaching-files/
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
-    - apt-get install -y file
     - file target/lambda/radiology-teaching-files/bootstrap
   artifacts:
     paths:
