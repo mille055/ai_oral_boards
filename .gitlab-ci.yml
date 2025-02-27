@@ -1,3 +1,31 @@
+stages:
+  - build-frontend
+  - build-backend
+  - deploy
+
+variables:
+  RUST_VERSION: "stable"
+  AWS_DEFAULT_REGION: "us-east-1"
+  LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
+  S3_BUCKET: "radiology-teaching-files"
+  DYNAMODB_TABLE: "RadiologyTeachingFiles"
+
+# Frontend Build
+build-frontend:
+  image: node:18
+  before_script:
+    - cd frontend
+    - npm install
+  script:
+    - npm run lint # Ensures JavaScript code quality
+    - npm run build # Builds the frontend assets
+  artifacts:
+    paths:
+      - frontend/build/
+    expire_in: 1 week
+  stage: build-frontend
+
+# Backend (Rust) Build
 build-backend:
   image: rust:slim
   before_script:
@@ -67,3 +95,38 @@ build-backend:
   
   dependencies:
     - build-frontend
+
+# Deployment
+deploy:
+  stage: deploy
+  image: amazon/aws-cli:latest
+  before_script:
+    - yum update -y
+    - yum install -y zip unzip
+  script:
+    # Ensure S3 bucket exists
+    - |
+      if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
+        aws s3 mb s3://$S3_BUCKET
+      fi
+    # Upload frontend files
+    - aws s3 sync frontend/build s3://$S3_BUCKET --delete
+    # Prepare Lambda deployment package
+    - mkdir -p deployment/frontend
+    # Copy bootstrap binary
+    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
+    # Copy frontend files to deployment package
+    - cp -r frontend/build/* deployment/frontend/
+    # Create zip package
+    - cd deployment
+    - zip -r ../function.zip .
+    - cd ..
+    # Deploy Lambda function
+    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://function.zip
+  dependencies:
+    - build-frontend
+    - build-backend
+  only:
+    - main
+  environment:
+    name: production
