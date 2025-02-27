@@ -28,15 +28,34 @@ build-backend:
   image: rust:slim
   before_script:
     - apt-get update -qy
-    - apt-get install -y curl zip unzip file
-    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-lambda/cargo-lambda/main/install.sh | sh
+    - apt-get install -y curl wget zip unzip file
+    
+    # Alternative cargo-lambda installation method
+    - wget https://github.com/cargo-lambda/cargo-lambda/releases/latest/download/cargo-lambda-x86_64-unknown-linux-gnu.tar.gz
+    - tar -xzf cargo-lambda-x86_64-unknown-linux-gnu.tar.gz
+    - mv cargo-lambda /usr/local/bin/
+    - chmod +x /usr/local/bin/cargo-lambda
+    
     - rustup update
     - rustup target add aarch64-unknown-linux-gnu
+  
   script:
-    - cargo lambda build --release
+    - echo "Current Rust toolchain:"
+    - rustc --version
+    - echo "Cargo version:"
+    - cargo --version
+    - echo "Cargo Lambda version:"
+    - cargo lambda --version
+    
+    - cargo lambda build --release --verbose
+    
     - mkdir -p target/lambda/radiology-teaching-files
     - cp target/lambda/radiology-teaching-files/bootstrap target/lambda/radiology-teaching-files/
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
+    
+    - echo "Verifying bootstrap binary:"
+    - file target/lambda/radiology-teaching-files/bootstrap
+  
   artifacts:
     paths:
       - target/lambda/radiology-teaching-files/
