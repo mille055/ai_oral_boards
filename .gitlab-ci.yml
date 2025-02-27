@@ -45,10 +45,19 @@ build-backend:
 # -------------------------------------
 deploy:
   stage: deploy
-  image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Use the correct Rust image
+  # image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Use the correct Rust image
+  # script:
+  #   - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
+  # dependencies:
+  image: amazon/aws-cli  # ✅ Use AWS CLI image for S3 upload
   script:
+    # ✅ Upload frontend files to "frontend/" folder in S3
+    - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/ --delete
+
+    # ✅ Deploy the backend Lambda function
     - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
   dependencies:
+    - build-frontend
     - build-backend
   only:
     - main
