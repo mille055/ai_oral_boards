@@ -30,7 +30,13 @@ build-backend:
     - apt-get update -qy
     - apt-get install -y curl wget zip unzip file
     
-    # Install cargo-lambda manually
+    # Install Zig
+    - wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz
+    - tar -xf zig-linux-x86_64-0.11.0.tar.xz
+    - mv zig-linux-x86_64-0.11.0 /usr/local/zig
+    - export PATH="/usr/local/zig:$PATH"
+    
+    # Install cargo-lambda
     - rustup update
     - cargo install cargo-lambda --locked
     
@@ -43,6 +49,8 @@ build-backend:
     - cargo --version
     - echo "Cargo Lambda version:"
     - cargo lambda --version
+    - echo "Zig version:"
+    - zig version
     
     - cargo lambda build --release --verbose
     
