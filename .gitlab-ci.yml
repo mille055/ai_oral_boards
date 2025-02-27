@@ -23,7 +23,6 @@ build-frontend:
     paths:
       - frontend/build/
     expire_in: 1 week
-  stage: build-frontend
 
 # Backend (Rust) Build
 build-backend:
