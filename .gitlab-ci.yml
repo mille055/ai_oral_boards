@@ -44,6 +44,7 @@ build-backend:
 # -------------------------------------
 deploy:
   stage: deploy
+  image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Use the correct Rust image
   script:
     - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
   dependencies:
