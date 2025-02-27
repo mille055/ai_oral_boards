@@ -1,14 +1,13 @@
 stages:
   - build
   - deploy
-
 variables:
   RUST_VERSION: "stable"
   AWS_DEFAULT_REGION: "us-east-1"
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
-  AWS_LAMBDA_ROLE: "arn:aws:iam::083702193891:role/lambda-radiology-role"  # Replace with your actual role ARN
+  AWS_LAMBDA_ROLE: "arn:aws:iam::083702193891:role/lambda-radiology-role" # Replace with your actual role ARN
 
 # -------------------------------------
 # 📌 Frontend Build Stage (Node.js)
@@ -16,15 +15,17 @@ variables:
 build-frontend:
   stage: build
   image: node:18
-  before_script:
+  script:
     - cd frontend
     - npm install
-  script:
     - npm run lint
     - npm run build
+    - cd ..
+    - mkdir -p build-artifacts/frontend
+    - cp -r frontend/build/* build-artifacts/frontend/
   artifacts:
     paths:
-      - frontend/build/
+      - build-artifacts/frontend/
     expire_in: 1 week
 
 # -------------------------------------
@@ -32,30 +33,43 @@ build-frontend:
 # -------------------------------------
 build-backend:
   stage: build
-  image: ghcr.io/cargo-lambda/cargo-lambda:latest  # ✅ Pre-built Lambda Rust image
+  image: ghcr.io/cargo-lambda/cargo-lambda:latest # ✅ Pre-built Lambda Rust image
   script:
-    - cargo lambda build --release --arm64  # ✅ Automatically handles targets
-
+    - cargo lambda build --release --arm64
+    - mkdir -p build-artifacts/lambda
+    - cp -r target/lambda/* build-artifacts/lambda/
   artifacts:
     paths:
-      - target/lambda/
+      - build-artifacts/lambda/
     expire_in: 1 week
+
 # -------------------------------------
-# 📌 Deployment to AWS Lambda & S3
+# 📌 Frontend Deployment to S3
 # -------------------------------------
-deploy:
+deploy-frontend:
   stage: deploy
-  image: ghcr.io/cargo-lambda/cargo-lambda:latest # ✅ Using cargo-lambda image with AWS CLI
-  before_script:
-    - apt-get update && apt-get install -y awscli # Install AWS CLI
-    - aws --version
+  image: amazon/aws-cli
   script:
-    - ls -R frontend/build/ # ✅ Ensure build files exist
-    - aws s3 sync frontend/build/ s3://$S3_BUCKET/frontend/
-    # ✅ Deploy the backend Lambda function
-    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
+    - aws --version
+    - ls -la build-artifacts/frontend/
+    - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/
   dependencies:
     - build-frontend
+  only:
+    - main
+  environment:
+    name: production
+
+# -------------------------------------
+# 📌 Backend Deployment to Lambda
+# -------------------------------------
+deploy-backend:
+  stage: deploy
+  image: ghcr.io/cargo-lambda/cargo-lambda:latest
+  script:
+    - ls -la build-artifacts/lambda/
+    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
+  dependencies:
     - build-backend
   only:
     - main
