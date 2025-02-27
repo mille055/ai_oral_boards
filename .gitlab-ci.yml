@@ -55,27 +55,30 @@ build-backend:
     # Build for Lambda
     - cargo lambda build --release
     
-    # Debug: List contents of build directories
-    - echo "Listing target directory:"
-    - ls -la target/
-    - echo "Listing lambda directory:"
-    - ls -la target/lambda/
+    # Debug: Detailed directory listing
+    - echo "Detailed target/lambda contents:"
+    - find target/lambda -type f
     
-    # Create target directories if they don't exist
-    - mkdir -p target/lambda/radiology-teaching-files
-    
-    # Find the correct bootstrap binary
-    - BOOTSTRAP_PATH=$(find target -name bootstrap | grep -E "lambda/radiology-teaching-files|release" | head -n 1)
-    
-    # Check if bootstrap path is found
+    # Explicitly find and copy the bootstrap binary
     - |
-      if [ -z "$BOOTSTRAP_PATH" ]; then
+      BOOTSTRAP_SOURCE=$(find target/lambda -name bootstrap | head -n 1)
+      if [ -z "$BOOTSTRAP_SOURCE" ]; then
         echo "Error: No bootstrap binary found"
         exit 1
       fi
+      
+      echo "Found bootstrap at: $BOOTSTRAP_SOURCE"
+      
+      # Create destination directory if it doesn't exist
+      mkdir -p target/lambda/radiology-teaching-files
+      
+      # Copy with verbose output
+      cp -v "$BOOTSTRAP_SOURCE" target/lambda/radiology-teaching-files/bootstrap
+      
+      # Verify the copy
+      ls -l target/lambda/radiology-teaching-files/bootstrap
     
-    # Copy bootstrap binary
-    - cp "$BOOTSTRAP_PATH" target/lambda/radiology-teaching-files/bootstrap
+    # Ensure executable permissions
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
     
     - echo "Verifying bootstrap binary:"
