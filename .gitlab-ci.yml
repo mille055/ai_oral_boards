@@ -8,6 +8,7 @@ variables:
   LAMBDA_FUNCTION_NAME: "radiology-teaching-files"
   S3_BUCKET: "radiology-teaching-files"
   DYNAMODB_TABLE: "RadiologyTeachingFiles"
+  AWS_LAMBDA_ROLE: "arn:aws:iam::083702193891:role/lambda-radiology-role"  # Replace with your actual role ARN
 
 # -------------------------------------
 # 📌 Frontend Build Stage (Node.js)
