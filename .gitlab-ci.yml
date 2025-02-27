@@ -52,10 +52,30 @@ build-backend:
     - echo "Zig version:"
     - zig version
     
-    - cargo lambda build --release --verbose
+    # Build for Lambda
+    - cargo lambda build --release
     
+    # Debug: List contents of build directories
+    - echo "Listing target directory:"
+    - ls -la target/
+    - echo "Listing lambda directory:"
+    - ls -la target/lambda/
+    
+    # Create target directories if they don't exist
     - mkdir -p target/lambda/radiology-teaching-files
-    - cp target/lambda/radiology-teaching-files/bootstrap target/lambda/radiology-teaching-files/
+    
+    # Find the correct bootstrap binary
+    - BOOTSTRAP_PATH=$(find target -name bootstrap | grep -E "lambda/radiology-teaching-files|release" | head -n 1)
+    
+    # Check if bootstrap path is found
+    - |
+      if [ -z "$BOOTSTRAP_PATH" ]; then
+        echo "Error: No bootstrap binary found"
+        exit 1
+      fi
+    
+    # Copy bootstrap binary
+    - cp "$BOOTSTRAP_PATH" target/lambda/radiology-teaching-files/bootstrap
     - chmod +x target/lambda/radiology-teaching-files/bootstrap
     
     - echo "Verifying bootstrap binary:"
@@ -68,6 +88,28 @@ build-backend:
     expire_in: 1 week
   dependencies:
     - build-frontend
+
+deploy:
+  stage: deploy
+  image: amazon/aws-cli:latest
+  before_script:
+    - yum update -y
+    - yum install -y zip unzip
+  script:
+    - |
+      if ! aws s3api head-bucket --bucket $S3_BUCKET 2>/dev/null; then
+        aws s3 mb s3://$S3_BUCKET
+      fi
+    - aws s3 sync frontend/build s3://$S3_BUCKET --delete
+    - mkdir -p deployment/frontend
+    - cp target/lambda/radiology-teaching-files/bootstrap deployment/
+    - cp -r frontend/build/* deployment/frontend/
+    - cd deployment
+    - zip -r ../function.zip .
+    - cd ..
+    - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://function.zip
+  dependencies:
+    - build-backend
   only:
     - main
   environment:
