@@ -97,7 +97,7 @@ deploy-backend:
     #- if [ ! -f build-artifacts/lambda/radiology-teaching-files/bootstrap ]; then echo "❌ ERROR: No Lambda bootstrap binary found!"; exit 1; fi
     - echo "✅ Found Lambda binary, proceeding with deployment..."
     #- cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION $LAMBDA_FUNCTION_NAME
-    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION --binary build-artifacts/lambda/bootstrap $LAMBDA_FUNCTION_NAME
+    - cargo lambda deploy --iam-role $AWS_LAMBDA_ROLE --region $AWS_DEFAULT_REGION --binary-path build-artifacts/lambda/bootstrap $LAMBDA_FUNCTION_NAME
   dependencies:
     - build-backend
   only:
