@@ -2,7 +2,6 @@ use lambda_runtime::{run, service_fn, LambdaEvent, Error as LambdaError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
-// use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
 use tracing::error;
@@ -23,16 +22,7 @@ struct Request {
     
     #[serde(rename = "path", default)]
     path: Option<String>,
-    
-    // #[serde(rename = "pathParameters", default)]
-    // path_parameters: Option<HashMap<String, String>>,
-    
-    // #[serde(rename = "queryStringParameters", default)]
-    // query_parameters: Option<HashMap<String, String>>,
-    
-    // #[serde(rename = "isBase64Encoded", default)]
-    // is_base64_encoded: Option<bool>,
-    
+
     #[serde(default)]
     body: Option<String>,
 }
@@ -62,16 +52,19 @@ impl Response {
             body: serde_json::to_string(&body)?,
         })
     }
-    #[allow(dead_code)]
-    fn with_content_type(mut self, content_type: &str) -> Self {
-        self.headers.insert("Content-Type".to_string(), content_type.to_string());
-        self
-    }
-    #[allow(dead_code)]
-    fn into_binary(mut self, data: Vec<u8>) -> Self {
-        self.is_base64_encoded = true;
-        self.body = BASE64.encode(data);
-        self
+
+    fn new_empty(status_code: u16) -> Result<Self> {
+        let mut headers = HashMap::new();
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+        headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
+        headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
+
+        Ok(Self {
+            status_code,
+            headers,
+            is_base64_encoded: false,
+            body: "".to_string(), // Empty body for preflight requests
+        })
     }
 }
 
@@ -79,12 +72,10 @@ impl Response {
 async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, LambdaError> {
     let bucket_name = env::var("S3_BUCKET").unwrap_or_else(|_| "radiology-teaching-files".to_string());
     let key = format!("frontend/{}", path.trim_start_matches('/'));
-    println!("Serving frontend file: {}/{}", bucket_name, key);
-    match s3_client.get_object()
-        .bucket(bucket_name)
-        .key(&key)
-        .send()
-        .await {
+    
+    println!("📂 Serving frontend file: {}/{}", bucket_name, key);
+
+    match s3_client.get_object().bucket(bucket_name).key(&key).send().await {
         Ok(output) => {
             let body = output.body.collect().await?.into_bytes();
             let content_type = match path.split('.').last() {
@@ -105,14 +96,14 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
             })
         }
         Err(e) => {
-            println!("Frontend file read error: {:?} - {}", key, e);
+            println!("❌ Frontend file read error: {:?} - {}", key, e);
             Ok(Response::new(404, "File Not Found")?)
         }
     }
 }
 
 async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, LambdaError> {
-    println!("FULL EVENT DUMP: {:?}", event);
+    println!("📥 FULL EVENT DUMP: {:?}", event);
     
     let request = event.payload;
     let config = aws_config::load_from_env().await;
@@ -122,17 +113,25 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
     let http_method = request.http_method.as_deref().unwrap_or("UNKNOWN");
     let path = request.path.as_deref().unwrap_or("/");
 
-    println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
+    println!("🌐 PROCESSED REQUEST: method={}, path={}", http_method, path);
 
+    // ✅ Handle CORS Preflight (OPTIONS) Requests
+    if http_method == "OPTIONS" {
+        return Response::new_empty(200);
+    }
+
+    // ✅ Serve Frontend from S3
     if !path.starts_with("/api") {
         return serve_frontend(&s3_client, path).await;
     }
 
+    // ✅ Handle API Endpoints
     let result = match (http_method, path) {
         ("GET", "/api/cases") => {
             let cases = db::list_cases(&dynamodb_client).await?;
             Ok(Response::new(200, ApiResponse::success(cases))?)
         },
+
         ("POST", "/api/cases") => {
             if let Some(body) = request.body {
                 let case_upload: models::CaseUpload = serde_json::from_str(&body)?;
@@ -163,6 +162,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
             }
         },
+
         _ => {
             Ok(Response::new(404, ErrorResponse::not_found("Route not found"))?)
         }
@@ -184,11 +184,11 @@ async fn main() -> Result<(), LambdaError> {
     let s3_client = S3Client::new(&config);
 
     if let Err(err) = db::ensure_table_exists(&dynamodb_client).await {
-        error!("Failed to ensure DynamoDB table exists: {:?}", err);
+        error!("⚠️ Failed to ensure DynamoDB table exists: {:?}", err);
     }
 
     if let Err(err) = s3::ensure_bucket_exists(&s3_client).await {
-        error!("Failed to ensure S3 bucket exists: {:?}", err);
+        error!("⚠️ Failed to ensure S3 bucket exists: {:?}", err);
     }
 
     run(service_fn(function_handler)).await
