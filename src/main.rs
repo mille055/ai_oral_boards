@@ -2,7 +2,6 @@ use lambda_runtime::{run, service_fn, LambdaEvent, Error as LambdaError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
-// use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
 use tracing::error;
@@ -24,15 +23,6 @@ struct Request {
     #[serde(rename = "path", default)]
     path: Option<String>,
     
-    // #[serde(rename = "pathParameters", default)]
-    // path_parameters: Option<HashMap<String, String>>,
-    
-    // #[serde(rename = "queryStringParameters", default)]
-    // query_parameters: Option<HashMap<String, String>>,
-    
-    // #[serde(rename = "isBase64Encoded", default)]
-    // is_base64_encoded: Option<bool>,
-    
     #[serde(default)]
     body: Option<String>,
 }
@@ -47,14 +37,25 @@ struct Response {
     body: String,
 }
 
+// Centralized function to create consistent CORS headers
+fn create_cors_headers() -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    // Use your actual frontend domain instead of * for better security
+    // For development, you can use multiple domains with conditional logic
+    let allowed_origin = env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
+    headers.insert("Access-Control-Allow-Origin".to_string(), allowed_origin);
+    headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, PUT, DELETE, OPTIONS".to_string());
+    headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type, Authorization, X-Requested-With".to_string());
+    
+    headers
+}
+
 impl Response {
     fn new(status_code: u16, body: impl Serialize) -> Result<Self> {
-        let mut headers = HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
-        //headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
-        headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
-        headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
-
+        let mut headers = create_cors_headers();
+        
         Ok(Self {
             status_code,
             headers,
@@ -62,11 +63,13 @@ impl Response {
             body: serde_json::to_string(&body)?,
         })
     }
+
     #[allow(dead_code)]
     fn with_content_type(mut self, content_type: &str) -> Self {
         self.headers.insert("Content-Type".to_string(), content_type.to_string());
         self
     }
+
     #[allow(dead_code)]
     fn into_binary(mut self, data: Vec<u8>) -> Self {
         self.is_base64_encoded = true;
@@ -80,6 +83,7 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
     let bucket_name = env::var("S3_BUCKET").unwrap_or_else(|_| "radiology-teaching-files".to_string());
     let key = format!("frontend/{}", path.trim_start_matches('/'));
     println!("Serving frontend file: {}/{}", bucket_name, key);
+    
     match s3_client.get_object()
         .bucket(bucket_name)
         .key(&key)
@@ -91,15 +95,20 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
                 Some("html") => "text/html; charset=utf-8",
                 Some("js") => "application/javascript; charset=utf-8",
                 Some("css") => "text/css; charset=utf-8",
+                Some("png") => "image/png",
+                Some("jpg") | Some("jpeg") => "image/jpeg",
+                Some("svg") => "image/svg+xml",
+                Some("json") => "application/json; charset=utf-8",
                 _ => "text/plain; charset=utf-8",
             };
 
+            // Get CORS headers and add content type
+            let mut headers = create_cors_headers();
+            headers.insert("Content-Type".to_string(), content_type.to_string());
+
             Ok(Response {
                 status_code: 200,
-                headers: HashMap::from([
-                    ("Content-Type".to_string(), content_type.to_string()),
-                    ("Access-Control-Allow-Origin".to_string(), "*".to_string()),
-                ]),
+                headers,
                 is_base64_encoded: true,
                 body: BASE64.encode(body),
             })
@@ -124,27 +133,22 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
-    // ✅ Handle CORS preflight (OPTIONS) request
+    // Handle CORS preflight (OPTIONS) request
     if http_method == "OPTIONS" {
-        let mut headers = HashMap::new();
-        //headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
-        headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
-        headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
-
         return Ok(Response {
             status_code: 200,
-            headers,
+            headers: create_cors_headers(),
             is_base64_encoded: false,
             body: "".to_string(),
         });
     }
 
-    // ✅ Serve static frontend files from S3
+    // Serve static frontend files from S3
     if !path.starts_with("/api") {
         return serve_frontend(&s3_client, path).await;
     }
 
-    // ✅ Handle API requests
+    // Handle API requests
     let result = match (http_method, path) {
         ("GET", "/api/cases") => {
             let cases = db::list_cases(&dynamodb_client).await?;
@@ -187,7 +191,6 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     result
 }
-
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
