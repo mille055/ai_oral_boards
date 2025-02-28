@@ -215,11 +215,40 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     (dummy_data, metadata)
                 } else {
                     // Regular processing for real DICOM files
-                    let dicom_data = BASE64.decode(&case_upload.dicom_file)?;
-                    let metadata = dicom::extract_metadata(&dicom_data)?;
+                    println!("Processing real DICOM file");
+                    println!("DICOM file base64 length: {}", case_upload.dicom_file.len());
+                
+                    // Decode the base64 data
+                    let dicom_data = match BASE64.decode(&case_upload.dicom_file) {
+                        Ok(data) => {
+                            println!("Successfully decoded base64 data. Size: {} bytes", data.len());
+                            data
+                        },
+                        Err(e) => {
+                            println!("Error decoding base64: {:?}", e);
+                            return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
+                        }
+                    };
+
+                    // Extract metadata from the DICOM file
+                    let metadata = match dicom::extract_metadata(&dicom_data) {
+                        Ok(meta) => {
+                            println!("Successfully extracted DICOM metadata:");
+                            println!("  SOP Instance UID: {}", meta.sop_instance_uid);
+                            println!("  Modality: {}", meta.modality);
+                            println!("  Patient Name: {}", meta.patient_name);
+                            meta
+                        },
+                        Err(e) => {
+                            println!("Error extracting DICOM metadata: {:?}", e);
+                            return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid DICOM file: {}", e)))?);
+                        }
+                    };
+                    
+                    println!("DICOM processing complete");
                     (dicom_data, metadata)
                 };
-                
+
                 let case_id = uuid::Uuid::new_v4().to_string();
                 let s3_key = format!("dicom/{}/{}.dcm", case_id, metadata.sop_instance_uid);
                 
