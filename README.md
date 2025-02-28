@@ -18,6 +18,13 @@ Before setting up, ensure you have:
 - 🖥️ GitLab CI/CD setup (if using automated deployment)
 
 ---
+## Screenshots of the interface and test case in the database
+
+![png](assets/cases.png)
+![png](assets/upload.png)
+![png](assets/dbconsole.png)
+
+---
 
 ## 🚀 Setup Instructions
 ### 1️⃣ Clone the repository
