@@ -127,7 +127,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
     // ✅ Handle CORS preflight (OPTIONS) request
     if http_method == "OPTIONS" {
         let mut headers = HashMap::new();
-        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+        //headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
         headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
         headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
 
