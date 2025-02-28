@@ -37,17 +37,26 @@ struct Response {
     body: String,
 }
 
-// Centralized function to create consistent headers without CORS
-// Let AWS Lambda URL service handle CORS instead
-fn create_response_headers(content_type: &str) -> HashMap<String, String> {
+// Add function to create CORS headers
+fn create_cors_headers() -> HashMap<String, String> {
     let mut headers = HashMap::new();
-    headers.insert("Content-Type".to_string(), content_type.to_string());
+    
+    // Set content type but don't set Access-Control-Allow-Origin
+    // since that's already handled by Lambda URL service
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
+    
+    // Set these additional headers that aren't in your Lambda URL CORS config
+    headers.insert("Access-Control-Allow-Methods".to_string(), 
+                  "GET, POST, PUT, DELETE, OPTIONS".to_string());
+    headers.insert("Access-Control-Allow-Headers".to_string(), 
+                  "Content-Type, Authorization, X-Requested-With".to_string());
+    
     headers
 }
 
 impl Response {
     fn new(status_code: u16, body: impl Serialize) -> Result<Self> {
-        let headers = create_response_headers("application/json");
+        let headers = create_cors_headers();
         
         Ok(Self {
             status_code,
@@ -56,13 +65,13 @@ impl Response {
             body: serde_json::to_string(&body)?,
         })
     }
-
+    
     #[allow(dead_code)]
     fn with_content_type(mut self, content_type: &str) -> Self {
         self.headers.insert("Content-Type".to_string(), content_type.to_string());
         self
     }
-
+    
     #[allow(dead_code)]
     fn into_binary(mut self, data: Vec<u8>) -> Self {
         self.is_base64_encoded = true;
@@ -95,8 +104,9 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
                 _ => "text/plain; charset=utf-8",
             };
 
-            // Just set content type headers
-            let headers = create_response_headers(content_type);
+            // Get headers with additional CORS headers
+            let mut headers = create_cors_headers();
+            headers.insert("Content-Type".to_string(), content_type.to_string());
 
             Ok(Response {
                 status_code: 200,
@@ -125,11 +135,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
-    // Handle OPTIONS request - let AWS Lambda URL service handle CORS
+    // Handle OPTIONS request with proper CORS headers
     if http_method == "OPTIONS" {
         return Ok(Response {
             status_code: 200,
-            headers: create_response_headers("text/plain"),
+            headers: create_cors_headers(),
             is_base64_encoded: false,
             body: "".to_string(),
         });
