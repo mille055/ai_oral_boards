@@ -12,37 +12,37 @@ variables:
 # -------------------------------------
 # 📌 Frontend Build Stage (Node.js)
 # -------------------------------------
-build-frontend:
-  stage: build
-  image: node:18
-  script:
-    - cd frontend
-    - npm install
-    - npm run lint
-    - npm run build
-    - cd ..
-    - mkdir -p build-artifacts/frontend
-    - echo "✅ Listing frontend directory after build:"
-    - ls -lah frontend/
-    - echo "✅ Checking frontend/build directory:"
-    #- ls -lah frontend/build/ || echo "⚠️ Warning: frontend/build/ does not exist! Checking alternative directories..."
-    - ls -lah frontend/dist/ || echo 
-    # Create a basic structure if build directory doesn't exist
-    - |
-      if [ ! -d "frontend/build" ]; then 
-        mkdir -p frontend/build
-        echo "index.html" > frontend/build/index.html
-      fi
-    - |
-      cp -r frontend/build/* build-artifacts/frontend/ || echo "Warning: No build files found, creating placeholder"
-    - |
-      if [ ! -f "build-artifacts/frontend/index.html" ]; then 
-        echo "<html><body><h1>Radiology Teaching Files</h1><p>Frontend placeholder</p></body></html>" > build-artifacts/frontend/index.html
-      fi
-  artifacts:
-    paths:
-      - build-artifacts/frontend/
-    expire_in: 1 week
+# build-frontend:
+#   stage: build
+#   image: node:18
+#   script:
+#     - cd frontend
+#     - npm install
+#     - npm run lint
+#     - npm run build
+#     - cd ..
+#     - mkdir -p build-artifacts/frontend
+#     - echo "✅ Listing frontend directory after build:"
+#     - ls -lah frontend/
+#     - echo "✅ Checking frontend/build directory:"
+#     #- ls -lah frontend/build/ || echo "⚠️ Warning: frontend/build/ does not exist! Checking alternative directories..."
+#     - ls -lah frontend/build/ || echo 
+#     # Create a basic structure if build directory doesn't exist
+#     - |
+#       if [ ! -d "frontend/build" ]; then 
+#         mkdir -p frontend/build
+#         echo "index.html" > frontend/build/index.html
+#       fi
+#     - |
+#       cp -r frontend/build/* build-artifacts/frontend/ || echo "Warning: No build files found, creating placeholder"
+#     - |
+#       if [ ! -f "build-artifacts/frontend/index.html" ]; then 
+#         echo "<html><body><h1>Radiology Teaching Files</h1><p>Frontend placeholder</p></body></html>" > build-artifacts/frontend/index.html
+#       fi
+#   artifacts:
+#     paths:
+#       - build-artifacts/frontend/
+#     expire_in: 1 week
 
 # -------------------------------------
 # 📌 Backend Build Stage (Rust + Lambda)
@@ -55,7 +55,9 @@ build-backend:
     - echo "✅ Listing Lambda build output:"
     - ls -lah target/lambda/
     - mkdir -p build-artifacts/lambda
-    - cp -r target/lambda/* build-artifacts/lambda/
+    - |
+      cp target/lambda/radiology-teaching-files/bootstrap build-artifacts/lambda/bootstrap || echo "❌ ERROR: No bootstrap binary found!"
+    - echo "✅ Final Lambda artifacts:"
     - ls -lah build-artifacts/lambda/
   artifacts:
     paths:
@@ -65,23 +67,23 @@ build-backend:
 # -------------------------------------
 # 📌 Frontend Deployment to S3
 # -------------------------------------
-deploy-frontend:
-  stage: deploy
-  image: amazon/aws-cli
-  script:
-    - aws --version
-    - echo "✅ Checking frontend artifacts before deployment:"
-    - ls -lah build-artifacts/frontend/
-    - echo "✅ Deploying frontend files to S3..."
-    - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/ --acl public-read
-    - echo "✅ S3 deployment complete. Verifying upload:"
-    - aws s3 ls s3://$S3_BUCKET/frontend/
-  dependencies:
-    - build-frontend
-  only:
-    - main
-  environment:
-    name: production
+# deploy-frontend:
+#   stage: deploy
+#   image: amazon/aws-cli
+#   script:
+#     - aws --version
+#     - echo "✅ Checking frontend artifacts before deployment:"
+#     - ls -lah build-artifacts/frontend/
+#     - echo "✅ Deploying frontend files to S3..."
+#     - aws s3 sync build-artifacts/frontend/ s3://$S3_BUCKET/frontend/ --acl public-read
+#     - echo "✅ S3 deployment complete. Verifying upload:"
+#     - aws s3 ls s3://$S3_BUCKET/frontend/
+#   dependencies:
+#     - build-frontend
+#   only:
+#     - main
+#   environment:
+#     name: production
 
 # -------------------------------------
 # 📌 Backend Deployment to Lambda
