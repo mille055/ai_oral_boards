@@ -15,7 +15,7 @@ mod models;
 
 use models::{Case, ApiResponse, ErrorResponse};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 struct Request {
     #[serde(rename = "httpMethod", default)]
     http_method: Option<String>,
@@ -23,8 +23,29 @@ struct Request {
     #[serde(rename = "path", default)]
     path: Option<String>,
     
+    #[serde(rename = "rawPath", default)]
+    raw_path: Option<String>,
+    
+    #[serde(rename = "requestContext", default)]
+    request_context: Option<RequestContext>,
+    
     #[serde(default)]
     body: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct RequestContext {
+    #[serde(rename = "http", default)]
+    http: Option<HttpContext>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+struct HttpContext {
+    #[serde(rename = "method", default)]
+    method: Option<String>,
+    
+    #[serde(rename = "path", default)]
+    path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -124,19 +145,33 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
 
 async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, LambdaError> {
     println!("FULL EVENT DUMP: {:?}", event);
+    // Also print the raw event JSON for better debugging
+    // println!("FULL RAW EVENT: {}", serde_json::to_string(&event.payload).unwrap_or_else(|_| "Failed to serialize event".to_string()));
     
     let request = event.payload;
     let config = aws_config::load_from_env().await;
     let dynamodb_client = DynamoDbClient::new(&config);
     let s3_client = S3Client::new(&config);
 
-    let http_method = request.http_method.as_deref().unwrap_or("UNKNOWN");
-    let path = request.path.as_deref().unwrap_or("/");
+    // Try to get HTTP method from multiple possible locations
+    let http_method = request.http_method
+        .or_else(|| request.request_context.as_ref()
+            .and_then(|ctx| ctx.http.as_ref()
+                .and_then(|http| http.method.clone())))
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+    
+    // Try to get path from multiple possible locations
+    let path = request.path
+        .or_else(|| request.raw_path.clone())
+        .or_else(|| request.request_context.as_ref()
+            .and_then(|ctx| ctx.http.as_ref()
+                .and_then(|http| http.path.clone())))
+        .unwrap_or_else(|| "/".to_string());
 
     println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
     // Handle OPTIONS request with proper CORS headers
-    if http_method == "OPTIONS" {
+    if http_method.as_str() == "OPTIONS" {
         return Ok(Response {
             status_code: 200,
             headers: create_cors_headers(),
@@ -147,17 +182,18 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     // Serve static frontend files from S3
     if !path.starts_with("/api") {
-        return serve_frontend(&s3_client, path).await;
+        return serve_frontend(&s3_client, &path).await;
     }
 
     // Handle API requests
-    let result = match (http_method, path) {
+    let result = match (http_method.as_str(), path.as_str()) {
         ("GET", "/api/cases") => {
             let cases = db::list_cases(&dynamodb_client).await?;
             Ok(Response::new(200, ApiResponse::success(cases))?)
         },
         ("POST", "/api/cases") => {
             if let Some(body) = request.body {
+                println!("Received POST body: {}", body);
                 let case_upload: models::CaseUpload = serde_json::from_str(&body)?;
                 let dicom_data = BASE64.decode(&case_upload.dicom_file)?;
                 let metadata = dicom::extract_metadata(&dicom_data)?;
@@ -183,10 +219,12 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 db::save_case(&dynamodb_client, &case).await?;
                 Ok(Response::new(201, ApiResponse::success(case))?)
             } else {
+                println!("Missing request body in POST");
                 Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
             }
         },
         _ => {
+            println!("Route not found: {} {}", http_method, path);
             Ok(Response::new(404, ErrorResponse::not_found("Route not found"))?)
         }
     };
