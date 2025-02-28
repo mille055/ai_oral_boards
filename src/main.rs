@@ -124,10 +124,27 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
+    // ✅ Handle CORS preflight (OPTIONS) request
+    if http_method == "OPTIONS" {
+        let mut headers = HashMap::new();
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+        headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
+        headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
+
+        return Ok(Response {
+            status_code: 200,
+            headers,
+            is_base64_encoded: false,
+            body: "".to_string(),
+        });
+    }
+
+    // ✅ Serve static frontend files from S3
     if !path.starts_with("/api") {
         return serve_frontend(&s3_client, path).await;
     }
 
+    // ✅ Handle API requests
     let result = match (http_method, path) {
         ("GET", "/api/cases") => {
             let cases = db::list_cases(&dynamodb_client).await?;
@@ -170,6 +187,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     result
 }
+
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
