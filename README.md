@@ -25,7 +25,9 @@ Before setting up, ensure you have:
 ![png](assets/dbconsole.png)
 
 ---
+The interface can be found at [https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html](https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html)
 
+---
 ## 🚀 Setup Instructions
 ### 1️⃣ Clone the repository
 ```sh
