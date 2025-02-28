@@ -78,7 +78,7 @@ impl Response {
 /// Serve static frontend files from S3
 async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, LambdaError> {
     let bucket_name = env::var("S3_BUCKET").unwrap_or_else(|_| "radiology-teaching-files".to_string());
-    let key = format!("frontend{}", path.trim_start_matches('/'));
+    let key = format!("frontend/{}", path.trim_start_matches('/'));
     println!("Serving frontend file: {}/{}", bucket_name, key);
     match s3_client.get_object()
         .bucket(bucket_name)
