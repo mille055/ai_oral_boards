@@ -37,24 +37,17 @@ struct Response {
     body: String,
 }
 
-// Centralized function to create consistent CORS headers
-fn create_cors_headers() -> HashMap<String, String> {
+// Centralized function to create consistent headers without CORS
+// Let AWS Lambda URL service handle CORS instead
+fn create_response_headers(content_type: &str) -> HashMap<String, String> {
     let mut headers = HashMap::new();
-    // Use your actual frontend domain instead of * for better security
-    // For development, you can use multiple domains with conditional logic
-    let allowed_origin = env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "*".to_string());
-    
-    headers.insert("Content-Type".to_string(), "application/json".to_string());
-    headers.insert("Access-Control-Allow-Origin".to_string(), allowed_origin);
-    headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, PUT, DELETE, OPTIONS".to_string());
-    headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type, Authorization, X-Requested-With".to_string());
-    
+    headers.insert("Content-Type".to_string(), content_type.to_string());
     headers
 }
 
 impl Response {
     fn new(status_code: u16, body: impl Serialize) -> Result<Self> {
-        let mut headers = create_cors_headers();
+        let headers = create_response_headers("application/json");
         
         Ok(Self {
             status_code,
@@ -102,9 +95,8 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
                 _ => "text/plain; charset=utf-8",
             };
 
-            // Get CORS headers and add content type
-            let mut headers = create_cors_headers();
-            headers.insert("Content-Type".to_string(), content_type.to_string());
+            // Just set content type headers
+            let headers = create_response_headers(content_type);
 
             Ok(Response {
                 status_code: 200,
@@ -133,11 +125,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 
     println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
-    // Handle CORS preflight (OPTIONS) request
+    // Handle OPTIONS request - let AWS Lambda URL service handle CORS
     if http_method == "OPTIONS" {
         return Ok(Response {
             status_code: 200,
-            headers: create_cors_headers(),
+            headers: create_response_headers("text/plain"),
             is_base64_encoded: false,
             body: "".to_string(),
         });
