@@ -51,7 +51,7 @@ impl Response {
     fn new(status_code: u16, body: impl Serialize) -> Result<Self> {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
+        //headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
         headers.insert("Access-Control-Allow-Methods".to_string(), "GET, POST, OPTIONS".to_string());
         headers.insert("Access-Control-Allow-Headers".to_string(), "Content-Type".to_string());
 
