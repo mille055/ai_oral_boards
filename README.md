@@ -18,14 +18,15 @@ Before setting up, ensure you have:
 - 🖥️ GitLab CI/CD setup (if using automated deployment)
 
 ---
-## Screenshots of the interface and test case in the database
+## Screenshots of the interface and test case in the database, showing successful update of the database
 
-![png](assets/cases.png)
-![png](assets/upload.png)
-![png](assets/dbconsole.png)
+![png](assets/cases2.png)
+![png](assets/upload2.png)
+![png](assets/upload2success.png)
+![png](assets/dbconsole2.png)
 
 ---
-The interface can be found at [https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html](https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html)
+The interface can be found at [https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html](https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html). As of right now, the image viewer is not fully deployed,but the components for this miniproject of a rust lambda microservice communicating with a DynamoDB database has been deployed.
 
 ---
 ## 🚀 Setup Instructions
