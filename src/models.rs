@@ -18,6 +18,7 @@ pub struct Case {
 pub struct CaseUpload {
     pub title: String,
     pub description: String,
+    #[serde(default)]
     pub modality: String,  // Ensure modality is included
     pub anatomy: String,
     pub diagnosis: String,
