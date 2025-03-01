@@ -13,7 +13,7 @@ mod s3;
 mod dicom;
 mod models;
 
-use models::{Case, ApiResponse, ErrorResponse, DicomMetadata, CaseUpload};
+use models::{Case, ApiResponse, ErrorResponse, DicomMetadata, CaseUpload, SeriesInfo};
 
 #[derive(Deserialize, Serialize, Debug)]
 struct Request {
@@ -213,21 +213,69 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 
                 println!("Fetching DICOM file: case={}, sop={}", case_id, sop_instance_uid);
                 
-                let s3_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
-                
-                match s3::download_file(&s3_client, &s3_key).await {
-                    Ok(dicom_data) => {
-                        println!("Successfully downloaded DICOM from S3: {}", s3_key);
+                // Get the case to find the correct study_instance_uid for more structured S3 path
+                match db::get_case(&dynamodb_client, case_id).await? {
+                    Some(case) => {
+                        // Use the case's study_instance_uid if available
+                        let s3_key = if !case.study_instance_uid.is_empty() {
+                            format!("dicom/{}/{}/{}.dcm", case_id, case.study_instance_uid, sop_instance_uid)
+                        } else {
+                            format!("dicom/{}/{}.dcm", case_id, sop_instance_uid)
+                        };
                         
-                        let mut response = Response::new(200, "")?;
-                        response = response.with_content_type("application/dicom");
-                        response = response.into_binary(dicom_data);
-                        
-                        Ok(response)
+                        match s3::download_file(&s3_client, &s3_key).await {
+                            Ok(dicom_data) => {
+                                println!("Successfully downloaded DICOM from S3: {}", s3_key);
+                                
+                                let mut response = Response::new(200, "")?;
+                                response = response.with_content_type("application/dicom");
+                                response = response.into_binary(dicom_data);
+                                
+                                Ok(response)
+                            },
+                            Err(e) => {
+                                println!("Error downloading DICOM from S3: {:?}", e);
+                                println!("Trying alternate S3 path...");
+                                
+                                // Try the simple path as fallback
+                                let fallback_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
+                                match s3::download_file(&s3_client, &fallback_key).await {
+                                    Ok(dicom_data) => {
+                                        println!("Successfully downloaded DICOM from fallback S3 path: {}", fallback_key);
+                                        
+                                        let mut response = Response::new(200, "")?;
+                                        response = response.with_content_type("application/dicom");
+                                        response = response.into_binary(dicom_data);
+                                        
+                                        Ok(response)
+                                    },
+                                    Err(e) => {
+                                        println!("Error downloading DICOM from fallback path: {:?}", e);
+                                        Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                                    }
+                                }
+                            }
+                        }
                     },
-                    Err(e) => {
-                        println!("Error downloading DICOM from S3: {:?}", e);
-                        Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                    None => {
+                        println!("Case not found for DICOM retrieval: {}", case_id);
+                        // Try direct S3 path without case lookup
+                        let direct_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
+                        match s3::download_file(&s3_client, &direct_key).await {
+                            Ok(dicom_data) => {
+                                println!("Successfully downloaded DICOM using direct path: {}", direct_key);
+                                
+                                let mut response = Response::new(200, "")?;
+                                response = response.with_content_type("application/dicom");
+                                response = response.into_binary(dicom_data);
+                                
+                                Ok(response)
+                            },
+                            Err(e) => {
+                                println!("Error downloading DICOM using direct path: {:?}", e);
+                                Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                            }
+                        }
                     }
                 }
             } else {
@@ -316,8 +364,15 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         Ok(meta) => {
                             println!("Successfully extracted DICOM metadata:");
                             println!("  SOP Instance UID: {}", meta.sop_instance_uid);
+                            println!("  Study Instance UID: {}", meta.study_instance_uid);
+                            println!("  Series Instance UID: {}", meta.series_instance_uid);
                             println!("  Modality: {}", meta.modality);
                             println!("  Patient Name: {}", meta.patient_name);
+                            println!("  Patient ID: {}", meta.patient_id);
+                            println!("  Study Date: {}", meta.study_date);
+                            println!("  Study Description: {}", meta.study_description);
+                            println!("  Series Description: {}", meta.series_description);
+                            println!("  Instance Number: {}", meta.instance_number);
                             (dicom_data, meta)
                         },
                         Err(e) => {
@@ -350,7 +405,12 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 println!("DICOM processing complete");
                 
                 let case_id = uuid::Uuid::new_v4().to_string();
-                let s3_key = format!("dicom/{}/{}.dcm", case_id, metadata.sop_instance_uid);
+                
+                // Use a more structured S3 path with study information
+                let s3_key = format!("dicom/{}/{}/{}.dcm", 
+                                    case_id, 
+                                    metadata.study_instance_uid,
+                                    metadata.sop_instance_uid);
                 println!("Generated S3 key: {}", s3_key);
                 
                 // Only upload to S3 if this isn't a test case
@@ -373,6 +433,16 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     "Unknown".to_string()
                 };
                 
+                // Create a series info object to organize the image
+                let series_info = SeriesInfo {
+                    series_instance_uid: metadata.series_instance_uid.clone(),
+                    series_number: metadata.instance_number,
+                    series_description: metadata.series_description.clone(),
+                    modality: metadata.modality.clone(),
+                    image_ids: vec![metadata.sop_instance_uid.clone()],
+                };
+                
+                // Create enhanced case with additional DICOM metadata
                 let case = Case {
                     case_id: case_id.clone(),
                     title: case_upload.title,
@@ -384,6 +454,17 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     tags: case_upload.tags,
                     image_ids: vec![metadata.sop_instance_uid.clone()],
                     created_at: chrono::Utc::now().to_rfc3339(),
+                    
+                    // Add DICOM metadata fields
+                    study_instance_uid: metadata.study_instance_uid.clone(),
+                    series_instance_uid: metadata.series_instance_uid.clone(),
+                    study_date: metadata.study_date.clone(),
+                    study_description: metadata.study_description.clone(),
+                    patient_id: metadata.patient_id.clone(),
+                    patient_name: metadata.patient_name.clone(),
+                    
+                    // Include series information
+                    series: vec![series_info],
                 };
                 
                 println!("Saving case to DynamoDB...");

@@ -8,18 +8,28 @@ document.addEventListener('DOMContentLoaded', function() {
     const modalityFilter = document.getElementById('modalityFilter');
     const anatomyFilter = document.getElementById('anatomyFilter');
     const applyFiltersBtn = document.getElementById('applyFilters');
-
+    
+    // API base URL - this should match your Lambda URL
+    const API_BASE_URL = 'https://pvhymfafqoym6f7uj4wj4dzsh40bprml.lambda-url.us-east-1.on.aws';
+    
     // Fetch and display all cases
     function fetchCases() {
         // Show loading indicator
         loadingIndicator.classList.remove('d-none');
         caseContainer.innerHTML = '';
         
-        fetch('/api/cases')
+        fetch(`${API_BASE_URL}/api/cases`)
             .then(response => response.json())
-            .then(cases => {
+            .then(responseData => {
                 // Hide loading indicator
                 loadingIndicator.classList.add('d-none');
+                
+                // Check response structure
+                if (!responseData.success) {
+                    throw new Error(responseData.error || 'Failed to fetch cases');
+                }
+                
+                const cases = responseData.data;
                 
                 if (cases.length === 0) {
                     noCasesMessage.classList.remove('d-none');
@@ -63,13 +73,16 @@ document.addEventListener('DOMContentLoaded', function() {
         // Create case cards
         filteredCases.forEach(caseItem => {
             const imageId = caseItem.image_ids[0]; // Get first image for thumbnail
-            
             const caseCard = document.createElement('div');
             caseCard.className = 'col-md-4 mb-4';
+            
+            // Use the DICOM API endpoint as the image source
+            const imageUrl = `${API_BASE_URL}/api/dicom/${caseItem.case_id}/${imageId}`;
+            
             caseCard.innerHTML = `
                 <div class="card case-card h-100">
                     <div class="image-container">
-                        <img src="/images/${imageId}.png" class="card-img-top" alt="${caseItem.title}" onerror="this.src='/images/placeholder.png'">
+                        <img src="${imageUrl}" class="card-img-top" alt="${caseItem.title}" onerror="this.src='images/placeholder.png'">
                     </div>
                     <div class="card-body">
                         <h5 class="card-title">${caseItem.title}</h5>

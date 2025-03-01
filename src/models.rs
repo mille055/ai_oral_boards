@@ -12,6 +12,34 @@ pub struct Case {
     pub tags: Vec<String>,
     pub image_ids: Vec<String>,
     pub created_at: String,
+    
+    // New DICOM metadata fields - these were previously only in DicomMetadata
+    #[serde(default)]
+    pub study_instance_uid: String,
+    #[serde(default)]
+    pub series_instance_uid: String,
+    #[serde(default)]
+    pub study_date: String,
+    #[serde(default)]
+    pub study_description: String,
+    #[serde(default)]
+    pub patient_id: String, 
+    #[serde(default)]
+    pub patient_name: String,
+    
+    // Series information for organizing multiple images
+    #[serde(default)]
+    pub series: Vec<SeriesInfo>,
+}
+
+// New struct for representing series within a case
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SeriesInfo {
+    pub series_instance_uid: String,
+    pub series_number: i32,
+    pub series_description: String,
+    pub modality: String,
+    pub image_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -19,13 +47,13 @@ pub struct CaseUpload {
     pub title: String,
     pub description: String,
     #[serde(default)]
-    pub modality: String,  // Ensure modality is included
+    pub modality: String,
     pub anatomy: String,
     pub diagnosis: String,
     pub findings: String,
     pub tags: Vec<String>,
     #[serde(rename = "dicomFile")]
-    pub dicom_file: String,  // Base64 encoded DICOM file
+    pub dicom_file: String, // Base64 encoded DICOM file
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

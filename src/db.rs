@@ -3,7 +3,7 @@ use aws_sdk_dynamodb::{Client, types::AttributeValue};
 use std::collections::HashMap;
 use tracing::{info, error};
 
-use crate::models::Case;
+use crate::models::{Case, SeriesInfo};
 
 // The name of the DynamoDB table
 const TABLE_NAME: &str = "RadiologyTeachingFiles";
@@ -22,8 +22,28 @@ pub async fn save_case(client: &Client, case: &Case) -> Result<()> {
         .map(|id| AttributeValue::S(id.clone()))
         .collect();
 
+    // Convert series to attribute values
+    let series: Vec<AttributeValue> = case.series.iter()
+        .map(|series_info| {
+            let mut map = HashMap::new();
+            map.insert("series_instance_uid".to_string(), AttributeValue::S(series_info.series_instance_uid.clone()));
+            map.insert("series_number".to_string(), AttributeValue::N(series_info.series_number.to_string()));
+            map.insert("series_description".to_string(), AttributeValue::S(series_info.series_description.clone()));
+            map.insert("modality".to_string(), AttributeValue::S(series_info.modality.clone()));
+            
+            // Convert series image_ids to attribute values
+            let series_image_ids: Vec<AttributeValue> = series_info.image_ids.iter()
+                .map(|id| AttributeValue::S(id.clone()))
+                .collect();
+            map.insert("image_ids".to_string(), AttributeValue::L(series_image_ids));
+            
+            AttributeValue::M(map)
+        })
+        .collect();
+
     let result = client.put_item()
         .table_name(TABLE_NAME)
+        // Base case fields
         .item("case_id", AttributeValue::S(case.case_id.clone()))
         .item("title", AttributeValue::S(case.title.clone()))
         .item("description", AttributeValue::S(case.description.clone()))
@@ -34,6 +54,18 @@ pub async fn save_case(client: &Client, case: &Case) -> Result<()> {
         .item("tags", AttributeValue::L(tags))
         .item("image_ids", AttributeValue::L(image_ids))
         .item("created_at", AttributeValue::S(case.created_at.clone()))
+        
+        // DICOM metadata fields
+        .item("study_instance_uid", AttributeValue::S(case.study_instance_uid.clone()))
+        .item("series_instance_uid", AttributeValue::S(case.series_instance_uid.clone()))
+        .item("study_date", AttributeValue::S(case.study_date.clone()))
+        .item("study_description", AttributeValue::S(case.study_description.clone()))
+        .item("patient_id", AttributeValue::S(case.patient_id.clone()))
+        .item("patient_name", AttributeValue::S(case.patient_name.clone()))
+        
+        // Series information
+        .item("series", AttributeValue::L(series))
+        
         .send()
         .await
         .context("Failed to save case to DynamoDB")?;
@@ -145,6 +177,79 @@ fn convert_item_to_case(item: HashMap<String, AttributeValue>) -> Result<Case> {
         .unwrap_or(&chrono::Utc::now().to_rfc3339())
         .clone();
     
+    // Extract DICOM metadata fields
+    let study_instance_uid = item.get("study_instance_uid")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    let series_instance_uid = item.get("series_instance_uid")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    let study_date = item.get("study_date")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    let study_description = item.get("study_description")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    let patient_id = item.get("patient_id")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    let patient_name = item.get("patient_name")
+        .and_then(|v| v.as_s().ok())
+        .map_or(String::new(), |s| s.to_string());
+    
+    // Extract series information
+    let series = item.get("series")
+        .and_then(|v| v.as_l().ok())
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| {
+                    if let Ok(map) = v.as_m() {
+                        let series_instance_uid = map.get("series_instance_uid")
+                            .and_then(|v| v.as_s().ok())
+                            .map_or(String::new(), |s| s.to_string());
+                        
+                        let series_number = map.get("series_number")
+                            .and_then(|v| v.as_n().ok())
+                            .and_then(|n| n.parse::<i32>().ok())
+                            .unwrap_or(0);
+                        
+                        let series_description = map.get("series_description")
+                            .and_then(|v| v.as_s().ok())
+                            .map_or(String::new(), |s| s.to_string());
+                        
+                        let modality = map.get("modality")
+                            .and_then(|v| v.as_s().ok())
+                            .map_or("Unknown".to_string(), |s| s.to_string());
+                        
+                        let image_ids = map.get("image_ids")
+                            .and_then(|v| v.as_l().ok())
+                            .map(|list| {
+                                list.iter()
+                                    .filter_map(|v| v.as_s().ok().cloned())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        
+                        Some(SeriesInfo {
+                            series_instance_uid,
+                            series_number,
+                            series_description,
+                            modality,
+                            image_ids,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    
     Ok(Case {
         case_id,
         title,
@@ -156,6 +261,17 @@ fn convert_item_to_case(item: HashMap<String, AttributeValue>) -> Result<Case> {
         tags,
         image_ids,
         created_at,
+        
+        // DICOM metadata fields
+        study_instance_uid,
+        series_instance_uid,
+        study_date,
+        study_description,
+        patient_id,
+        patient_name,
+        
+        // Series information
+        series,
     })
 }
 
