@@ -189,6 +189,51 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
             let cases = db::list_cases(&dynamodb_client).await?;
             Ok(Response::new(200, ApiResponse::success(cases))?)
         },
+        ("GET", path) if path.starts_with("/api/cases/") => {
+            let case_id = path.trim_start_matches("/api/cases/");
+            println!("Fetching case by ID: {}", case_id);
+            
+            match db::get_case(&dynamodb_client, case_id).await? {
+                Some(case) => {
+                    Ok(Response::new(200, ApiResponse::success(case))?)
+                },
+                None => {
+                    println!("Case not found: {}", case_id);
+                    Ok(Response::new(404, ErrorResponse::not_found(&format!("Case not found: {}", case_id)))?)
+                }
+            }
+        },
+        ("GET", path) if path.starts_with("/api/dicom/") => {
+            // Format should be /api/dicom/{case_id}/{sop_instance_uid}
+            let path_parts: Vec<&str> = path.split('/').collect();
+            
+            if path_parts.len() >= 4 {
+                let case_id = path_parts[3];
+                let sop_instance_uid = path_parts.get(4).unwrap_or(&"");
+                
+                println!("Fetching DICOM file: case={}, sop={}", case_id, sop_instance_uid);
+                
+                let s3_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
+                
+                match s3::download_file(&s3_client, &s3_key).await {
+                    Ok(dicom_data) => {
+                        println!("Successfully downloaded DICOM from S3: {}", s3_key);
+                        
+                        let mut response = Response::new(200, "")?;
+                        response = response.with_content_type("application/dicom");
+                        response = response.into_binary(dicom_data);
+                        
+                        Ok(response)
+                    },
+                    Err(e) => {
+                        println!("Error downloading DICOM from S3: {:?}", e);
+                        Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                    }
+                }
+            } else {
+                Ok(Response::new(400, ErrorResponse::bad_request("Invalid DICOM URL format"))?)
+            }
+        },
         ("POST", "/api/cases") => {
             if let Some(body) = request.body {
                 println!("--------------------------------");
