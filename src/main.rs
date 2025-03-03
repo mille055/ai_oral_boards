@@ -480,6 +480,139 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
             }
         },
+        // NEW ENDPOINT FOR ADDING IMAGES TO EXISTING CASE
+        ("POST", path) if path.starts_with("/api/cases/") && path.contains("/images") => {
+            // Extract case_id from path: format is /api/cases/{case_id}/images
+            let parts: Vec<&str> = path.split('/').collect();
+            if parts.len() < 5 {
+                return Ok(Response::new(400, ErrorResponse::bad_request("Invalid URL format for adding images"))?)
+            }
+            
+            let case_id = parts[3];
+            println!("Adding images to case: {}", case_id);
+            
+            // Verify the case exists
+            match db::get_case(&dynamodb_client, case_id).await? {
+                Some(mut existing_case) => {
+                    // Case exists, now process the uploaded file
+                    if let Some(body) = request.body {
+                        println!("Received request to add image to case: {}", case_id);
+                        
+                        // Parse the upload data
+                        #[derive(Deserialize)]
+                        struct ImageUpload {
+                            #[serde(rename = "dicomFile")]
+                            dicom_file: String,
+                        }
+                        
+                        let image_upload: ImageUpload = match serde_json::from_str(&body) {
+                            Ok(upload) => upload,
+                            Err(e) => {
+                                println!("Error parsing image upload JSON: {:?}", e);
+                                return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid JSON: {}", e)))?);
+                            }
+                        };
+                        
+                        // Process the DICOM file
+                        println!("Processing additional DICOM file for case: {}", case_id);
+                        
+                        // Decode the base64 data
+                        let dicom_data = match BASE64.decode(&image_upload.dicom_file) {
+                            Ok(data) => {
+                                println!("Successfully decoded base64 data. Size: {} bytes", data.len());
+                                data
+                            },
+                            Err(e) => {
+                                println!("Error decoding base64: {:?}", e);
+                                return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
+                            }
+                        };
+                        
+                        // Extract metadata from the DICOM file
+                        let metadata = match dicom::extract_metadata(&dicom_data) {
+                            Ok(meta) => {
+                                println!("Successfully extracted DICOM metadata:");
+                                println!("  SOP Instance UID: {}", meta.sop_instance_uid);
+                                meta
+                            },
+                            Err(e) => {
+                                println!("Error extracting DICOM metadata: {:?}", e);
+                                return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid DICOM file: {}", e)))?);
+                            }
+                        };
+                        
+                        // Check if this image belongs to the same study as existing images
+                        if !existing_case.study_instance_uid.is_empty() && 
+                           existing_case.study_instance_uid != metadata.study_instance_uid {
+                            println!("Warning: New image has different study UID than existing case");
+                            // Continue anyway, but log the discrepancy
+                        }
+                        
+                        // Upload the DICOM file to S3
+                        let s3_key = format!("dicom/{}/{}/{}.dcm", 
+                                            case_id, 
+                                            metadata.study_instance_uid,
+                                            metadata.sop_instance_uid);
+                        
+                        println!("Uploading additional DICOM to S3: {}", s3_key);
+                        match s3::upload_file(&s3_client, &s3_key, dicom_data).await {
+                            Ok(_) => println!("S3 upload successful"),
+                            Err(e) => {
+                                println!("S3 upload error: {:?}", e);
+                                return Ok(Response::new(500, ErrorResponse::server_error(format!("Failed to upload file: {}", e)))?);
+                            }
+                        }
+                        
+                        // Update the case with the new image
+                        // Check if the series already exists
+                        let mut found_series = false;
+                        for series in &mut existing_case.series {
+                            if series.series_instance_uid == metadata.series_instance_uid {
+                                // Add image to existing series
+                                series.image_ids.push(metadata.sop_instance_uid.clone());
+                                found_series = true;
+                                break;
+                            }
+                        }
+                        
+                        // If series doesn't exist, create a new one
+                        if !found_series {
+                            let series_info = SeriesInfo {
+                                series_instance_uid: metadata.series_instance_uid.clone(),
+                                series_number: metadata.instance_number,
+                                series_description: metadata.series_description.clone(),
+                                modality: metadata.modality.clone(),
+                                image_ids: vec![metadata.sop_instance_uid.clone()],
+                            };
+                            existing_case.series.push(series_info);
+                        }
+                        
+                        // Also add to the flat image_ids list for backward compatibility
+                        existing_case.image_ids.push(metadata.sop_instance_uid.clone());
+                        
+                        // Update the case in the database
+                        println!("Updating case in DynamoDB...");
+                        match db::save_case(&dynamodb_client, &existing_case).await {
+                            Ok(_) => println!("DynamoDB update successful"),
+                            Err(e) => {
+                                println!("DynamoDB update error: {:?}", e);
+                                return Ok(Response::new(500, ErrorResponse::server_error(format!("Failed to update case: {}", e)))?);
+                            }
+                        }
+                        
+                        // Return success response with updated case
+                        Ok(Response::new(200, ApiResponse::success(existing_case))?)
+                    } else {
+                        println!("Missing request body for image upload");
+                        Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
+                    }
+                },
+                None => {
+                    println!("Case not found: {}", case_id);
+                    Ok(Response::new(404, ErrorResponse::not_found(&format!("Case not found: {}", case_id)))?)
+                }
+            }
+        },
         _ => {
             println!("Route not found: {} {}", http_method, path);
             Ok(Response::new(404, ErrorResponse::not_found("Route not found"))?)
