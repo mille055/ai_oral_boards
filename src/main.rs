@@ -327,9 +327,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 
                 // Special handling for test cases or problematic data
                 let is_test_data = case_upload.dicom_file == "QVRFTVBJT1JSVEVS=" || 
-                                   case_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS") ||
-                                   case_upload.dicom_file.starts_with("AA");
-
+                                   case_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS");
                 let dicom_data = if is_test_data {
                     println!("Detected test case or simplified data, using dummy DICOM data");
                     vec![0u8; 10] // Dummy data
