@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', function() {
             resetUploadButton();
             return;
         }
-
+        
         console.log(`Processing ${dicomFiles.length} files...`);
         
         // Create progress info
