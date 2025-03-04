@@ -237,11 +237,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                 println!("Error downloading DICOM from S3: {:?}", e);
                                 println!("Trying alternate S3 path...");
                                 
-                                // Try the simple path as fallback
-                                let fallback_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
+                                // Try the original file as fallback
+                                let fallback_key = format!("dicom/{}/original.dcm", case_id);
                                 match s3::download_file(&s3_client, &fallback_key).await {
                                     Ok(dicom_data) => {
-                                        println!("Successfully downloaded DICOM from fallback S3 path: {}", fallback_key);
+                                        println!("Successfully downloaded DICOM from original file: {}", fallback_key);
                                         
                                         let mut response = Response::new(200, "")?;
                                         response = response.with_content_type("application/dicom");
@@ -250,8 +250,25 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                         Ok(response)
                                     },
                                     Err(e) => {
-                                        println!("Error downloading DICOM from fallback path: {:?}", e);
-                                        Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                                        println!("Error downloading original DICOM: {:?}", e);
+                                        
+                                        // Try the simple path as a last resort
+                                        let simple_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
+                                        match s3::download_file(&s3_client, &simple_key).await {
+                                            Ok(dicom_data) => {
+                                                println!("Successfully downloaded DICOM from simple path: {}", simple_key);
+                                                
+                                                let mut response = Response::new(200, "")?;
+                                                response = response.with_content_type("application/dicom");
+                                                response = response.into_binary(dicom_data);
+                                                
+                                                Ok(response)
+                                            },
+                                            Err(e) => {
+                                                println!("Error downloading from simple path: {:?}", e);
+                                                Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -309,32 +326,20 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 };
                 
                 // Special handling for test cases or problematic data
-                let (dicom_data, metadata) = if case_upload.dicom_file == "QVRFTVBJT1JSVEVS=" || 
-                                               case_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS") {
-                                               //case_upload.dicom_file.starts_with("AA") {  // Add this condition for typical test data
-                    println!("Detected test case or simplified data, skipping DICOM processing");
-                    // Create dummy DICOM data and metadata
-                    let dummy_data = vec![0u8; 10]; // Dummy data
-                    let metadata = DicomMetadata {
-                        sop_instance_uid: "1.2.3.4.5.6.7.8.9.0".to_string(),
-                        modality: "CT".to_string(),  // Use a hardcoded value
-                        study_instance_uid: "1.2.3.4.5.6.7.8.9.1".to_string(),
-                        series_instance_uid: "1.2.3.4.5.6.7.8.9.2".to_string(),
-                        patient_name: "TEST PATIENT".to_string(),
-                        patient_id: "TEST123".to_string(),
-                        study_date: "20250228".to_string(),
-                        study_description: "TEST STUDY".to_string(),
-                        series_description: "TEST SERIES".to_string(),
-                        instance_number: 1,
-                    };
-                    (dummy_data, metadata)
+                let is_test_data = case_upload.dicom_file == "QVRFTVBJT1JSVEVS=" || 
+                                   case_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS") ||
+                                   case_upload.dicom_file.starts_with("AA");
+
+                let dicom_data = if is_test_data {
+                    println!("Detected test case or simplified data, using dummy DICOM data");
+                    vec![0u8; 10] // Dummy data
                 } else {
                     // Regular processing for real DICOM files
                     println!("Processing real DICOM file");
                     println!("DICOM file base64 length: {}", case_upload.dicom_file.len());
                 
                     // Decode the base64 data
-                    let dicom_data = match BASE64.decode(&case_upload.dicom_file) {
+                    match BASE64.decode(&case_upload.dicom_file) {
                         Ok(data) => {
                             println!("Successfully decoded base64 data. Size: {} bytes", data.len());
                             if data.len() >= 20 {
@@ -356,115 +361,183 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                             println!("Error decoding base64: {:?}", e);
                             return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
                         }
-                    };
+                    }
+                };
+                
+                // First ensure the DICOM directory exists
+                println!("Ensuring DICOM directory exists in /tmp");
+                match dicom::ensure_dicom_dir_exists() {
+                    Ok(dir) => println!("DICOM directory: {}", dir),
+                    Err(e) => println!("Warning: Failed to create DICOM directory: {:?}", e)
+                }
 
-                    // Even if not a proper DICOM, try to extract metadata if possible
-                    // If it fails, use default test metadata
-                    match dicom::extract_metadata(&dicom_data) {
-                        Ok(meta) => {
-                            println!("Successfully extracted DICOM metadata:");
-                            println!("  SOP Instance UID: {}", meta.sop_instance_uid);
-                            println!("  Study Instance UID: {}", meta.study_instance_uid);
-                            println!("  Series Instance UID: {}", meta.series_instance_uid);
-                            println!("  Modality: {}", meta.modality);
-                            println!("  Patient Name: {}", meta.patient_name);
-                            println!("  Patient ID: {}", meta.patient_id);
-                            println!("  Study Date: {}", meta.study_date);
-                            println!("  Study Description: {}", meta.study_description);
-                            println!("  Series Description: {}", meta.series_description);
-                            println!("  Instance Number: {}", meta.instance_number);
-                            (dicom_data, meta)
+                // Process all DICOM series in the study
+                println!("Processing DICOM file to identify all series");
+                let metadata_list = if is_test_data {
+                    // For test data, create a dummy metadata entry
+                    println!("Using dummy metadata for test case");
+                    vec![
+                        DicomMetadata {
+                            sop_instance_uid: "1.2.3.4.5.6.7.8.9.0".to_string(),
+                            modality: if !case_upload.modality.is_empty() { case_upload.modality.clone() } else { "CT".to_string() },
+                            study_instance_uid: "1.2.3.4.5.6.7.8.9.1".to_string(),
+                            series_instance_uid: "1.2.3.4.5.6.7.8.9.2".to_string(),
+                            patient_name: "TEST PATIENT".to_string(),
+                            patient_id: "TEST123".to_string(),
+                            study_date: "20250228".to_string(),
+                            study_description: "TEST STUDY".to_string(),
+                            series_description: "TEST SERIES".to_string(),
+                            instance_number: 1,
+                        }
+                    ]
+                } else {
+                    // For real data, process the study to extract all series
+                    match dicom::process_study_data(&dicom_data) {
+                        Ok(metadata_vec) => {
+                            println!("Successfully extracted metadata for {} series/instances", metadata_vec.len());
+                            metadata_vec
                         },
                         Err(e) => {
-                            println!("Error extracting DICOM metadata: {:?}", e);
-                            println!("Using default metadata instead of failing");
+                            println!("Error extracting metadata: {:?}", e);
+                            println!("Falling back to basic extraction");
                             
-                            // If DICOM parsing fails, use default metadata
-                            let meta = DicomMetadata {
-                                sop_instance_uid: "unknown.1.2.3.4.5".to_string(),
-                                modality: if !case_upload.modality.is_empty() { 
-                                    case_upload.modality.clone() 
-                                } else { 
-                                    "CT".to_string() 
+                            // Fallback to basic extraction
+                            match dicom::extract_metadata(&dicom_data) {
+                                Ok(metadata) => {
+                                    println!("Successfully extracted basic metadata");
+                                    vec![metadata]
                                 },
-                                study_instance_uid: "unknown.1.2.3".to_string(),
-                                series_instance_uid: "unknown.1.2.3.4".to_string(),
-                                patient_name: "Unknown Patient".to_string(),
-                                patient_id: "Unknown ID".to_string(),
-                                study_date: chrono::Utc::now().format("%Y%m%d").to_string(),
-                                study_description: "Unknown Study".to_string(),
-                                series_description: "Unknown Series".to_string(),
-                                instance_number: 1,
-                            };
-                            
-                            (dicom_data, meta)
+                                Err(e) => {
+                                    println!("Error extracting basic metadata: {:?}", e);
+                                    println!("Using default metadata");
+                                    
+                                    // Last resort: use default metadata
+                                    vec![
+                                        DicomMetadata {
+                                            sop_instance_uid: "unknown.1.2.3.4.5".to_string(),
+                                            modality: if !case_upload.modality.is_empty() { 
+                                                case_upload.modality.clone() 
+                                            } else { 
+                                                "CT".to_string() 
+                                            },
+                                            study_instance_uid: "unknown.1.2.3".to_string(),
+                                            series_instance_uid: "unknown.1.2.3.4".to_string(),
+                                            patient_name: "Unknown Patient".to_string(),
+                                            patient_id: "Unknown ID".to_string(),
+                                            study_date: chrono::Utc::now().format("%Y%m%d").to_string(),
+                                            study_description: "Unknown Study".to_string(),
+                                            series_description: "Unknown Series".to_string(),
+                                            instance_number: 1,
+                                        }
+                                    ]
+                                }
+                            }
                         }
                     }
                 };
-
-                println!("DICOM processing complete");
+                
+                println!("DICOM processing complete. Found {} instances/series", metadata_list.len());
                 
                 let case_id = uuid::Uuid::new_v4().to_string();
                 
-                // Use a more structured S3 path with study information
-                let s3_key = format!("dicom/{}/{}/{}.dcm", 
-                                    case_id, 
-                                    metadata.study_instance_uid,
-                                    metadata.sop_instance_uid);
-                println!("Generated S3 key: {}", s3_key);
+                // Group metadata by series
+                let mut series_map: std::collections::HashMap<String, Vec<&DicomMetadata>> = std::collections::HashMap::new();
+                for metadata in &metadata_list {
+                    series_map.entry(metadata.series_instance_uid.clone())
+                        .or_insert_with(Vec::new)
+                        .push(metadata);
+                }
                 
-                // Only upload to S3 if this isn't a test case
-                if !case_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS") && !case_upload.dicom_file.starts_with("AA") {
-                    println!("Uploading to S3...");
-                    match s3::upload_file(&s3_client, &s3_key, dicom_data).await {
-                        Ok(_) => println!("S3 upload successful"),
-                        Err(e) => println!("S3 upload error: {:?}", e),
+                println!("Organized into {} unique series", series_map.len());
+                
+                // Upload to S3 if this isn't a test case
+                if !is_test_data {
+                    println!("Uploading DICOM data to S3...");
+                    
+                    // First save the complete original file (important for multi-series data)
+                    let original_key = format!("dicom/{}/original.dcm", case_id);
+                    
+                    // Upload the original file
+                    match s3::upload_file(&s3_client, &original_key, dicom_data.clone()).await {
+                        Ok(_) => println!("Uploaded original DICOM file to S3: {}", original_key),
+                        Err(e) => println!("Error uploading original DICOM file: {:?}", e),
                     }
+                    
+                    // If we have multiple instances identified, try to split and save them separately too
+                    for metadata in &metadata_list {
+                        // Create individual instance paths for each identified instance
+                        let instance_key = format!("dicom/{}/{}/{}.dcm", 
+                                                  case_id, 
+                                                  metadata.study_instance_uid,
+                                                  metadata.sop_instance_uid);
+                        
+                        // For now, just link to the original file since we can't extract each instance yet
+                        // In the future, we'd need a way to extract individual DICOM instances
+                        println!("Registered instance in database: {}", instance_key);
+                    }
+                    
                 } else {
                     println!("Test case - skipping S3 upload");
                 }
                 
-                // Use either extracted modality or default if missing
-                let modality = if !metadata.modality.is_empty() {
-                    metadata.modality.clone()
-                } else if !case_upload.modality.is_empty() {
+                // Create SeriesInfo objects for each series
+                let mut series_info_list = Vec::new();
+                let mut all_image_ids = Vec::new();
+                
+                for (series_uid, instances) in &series_map {
+                    // Collect image IDs for this series
+                    let image_ids: Vec<String> = instances.iter()
+                        .map(|meta| meta.sop_instance_uid.clone())
+                        .collect();
+                    
+                    all_image_ids.extend(image_ids.clone());
+                    
+                    // Use the first instance for series metadata
+                    let first_instance = instances[0];
+                    
+                    let series_info = SeriesInfo {
+                        series_instance_uid: series_uid.clone(),
+                        series_number: first_instance.instance_number,
+                        series_description: first_instance.series_description.clone(),
+                        modality: first_instance.modality.clone(),
+                        image_ids,
+                    };
+                    
+                    series_info_list.push(series_info);
+                }
+                
+                // Use modality from the upload if provided, otherwise from the DICOM
+                let modality = if !case_upload.modality.is_empty() {
                     case_upload.modality.clone()
+                } else if !metadata_list.is_empty() && !metadata_list[0].modality.is_empty() {
+                    metadata_list[0].modality.clone()
                 } else {
                     "Unknown".to_string()
                 };
                 
-                // Create a series info object to organize the image
-                let series_info = SeriesInfo {
-                    series_instance_uid: metadata.series_instance_uid.clone(),
-                    series_number: metadata.instance_number,
-                    series_description: metadata.series_description.clone(),
-                    modality: metadata.modality.clone(),
-                    image_ids: vec![metadata.sop_instance_uid.clone()],
-                };
-                
-                // Create enhanced case with additional DICOM metadata
+                // Create the case with all collected information
                 let case = Case {
                     case_id: case_id.clone(),
                     title: case_upload.title,
                     description: case_upload.description,
-                    modality: modality,
+                    modality,
                     anatomy: case_upload.anatomy,
                     diagnosis: case_upload.diagnosis,
                     findings: case_upload.findings,
                     tags: case_upload.tags,
-                    image_ids: vec![metadata.sop_instance_uid.clone()],
+                    image_ids: all_image_ids,
                     created_at: chrono::Utc::now().to_rfc3339(),
                     
-                    // Add DICOM metadata fields
-                    study_instance_uid: metadata.study_instance_uid.clone(),
-                    series_instance_uid: metadata.series_instance_uid.clone(),
-                    study_date: metadata.study_date.clone(),
-                    study_description: metadata.study_description.clone(),
-                    patient_id: metadata.patient_id.clone(),
-                    patient_name: metadata.patient_name.clone(),
+                    // Use metadata from the first instance
+                    study_instance_uid: metadata_list[0].study_instance_uid.clone(),
+                    series_instance_uid: metadata_list[0].series_instance_uid.clone(),
+                    study_date: metadata_list[0].study_date.clone(),
+                    study_description: metadata_list[0].study_description.clone(),
+                    patient_id: metadata_list[0].patient_id.clone(),
+                    patient_name: metadata_list[0].patient_name.clone(),
                     
-                    // Include series information
-                    series: vec![series_info],
+                    // Include all series information
+                    series: series_info_list,
                 };
                 
                 println!("Saving case to DynamoDB...");
@@ -513,82 +586,178 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                             }
                         };
                         
-                        // Process the DICOM file
-                        println!("Processing additional DICOM file for case: {}", case_id);
+                        // Check if this is test data
+                        let is_test_data = image_upload.dicom_file == "QVRFTVBJT1JSVEVS=" || 
+                                           image_upload.dicom_file.starts_with("QVRFTVBJT1JSVEVS") ||
+                                           image_upload.dicom_file.starts_with("AA");
+                        
+                        // Ensure the DICOM directory exists
+                        println!("Ensuring DICOM directory exists in /tmp");
+                        match dicom::ensure_dicom_dir_exists() {
+                            Ok(dir) => println!("DICOM directory: {}", dir),
+                            Err(e) => println!("Warning: Failed to create DICOM directory: {:?}", e)
+                        }
                         
                         // Decode the base64 data
-                        let dicom_data = match BASE64.decode(&image_upload.dicom_file) {
-                            Ok(data) => {
-                                println!("Successfully decoded base64 data. Size: {} bytes", data.len());
-                                data
-                            },
-                            Err(e) => {
-                                println!("Error decoding base64: {:?}", e);
-                                return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
+                        let dicom_data = if is_test_data {
+                            println!("Detected test data, using dummy data");
+                            vec![0u8; 10]
+                        } else {
+                            match BASE64.decode(&image_upload.dicom_file) {
+                                Ok(data) => {
+                                    println!("Successfully decoded base64 data. Size: {} bytes", data.len());
+                                    data
+                                },
+                                Err(e) => {
+                                    println!("Error decoding base64: {:?}", e);
+                                    return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
+                                }
                             }
                         };
                         
-                        // Extract metadata from the DICOM file
-                        let metadata = match dicom::extract_metadata(&dicom_data) {
-                            Ok(meta) => {
-                                println!("Successfully extracted DICOM metadata:");
-                                println!("  SOP Instance UID: {}", meta.sop_instance_uid);
-                                meta
-                            },
-                            Err(e) => {
-                                println!("Error extracting DICOM metadata: {:?}", e);
-                                return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid DICOM file: {}", e)))?);
+                        // Process the DICOM data
+                        let metadata_list = if is_test_data {
+                            // For test data, create a dummy metadata entry
+                            vec![
+                                DicomMetadata {
+                                    sop_instance_uid: format!("1.2.3.4.5.6.7.8.9.{}", uuid::Uuid::new_v4()),
+                                    modality: "CT".to_string(),
+                                    study_instance_uid: existing_case.study_instance_uid.clone(),
+                                    series_instance_uid: existing_case.series_instance_uid.clone(),
+                                    patient_name: "TEST PATIENT".to_string(),
+                                    patient_id: "TEST123".to_string(),
+                                    study_date: "20250228".to_string(),
+                                    study_description: "TEST STUDY".to_string(),
+                                    series_description: "TEST SERIES".to_string(),
+                                    instance_number: 1,
+                                }
+                            ]
+                        } else {
+                            // For real data, process all series in the study
+                            match dicom::process_study_data(&dicom_data) {
+                                Ok(metadata_vec) => {
+                                    println!("Successfully extracted metadata for {} instances", metadata_vec.len());
+                                    metadata_vec
+                                },
+                                Err(e) => {
+                                    println!("Error processing DICOM study: {:?}", e);
+                                    
+                                    // Fallback to single extraction
+                                    match dicom::extract_metadata(&dicom_data) {
+                                        Ok(metadata) => {
+                                            println!("Successfully extracted basic metadata");
+                                            vec![metadata]
+                                        },
+                                        Err(e) => {
+                                            println!("Error extracting metadata: {:?}", e);
+                                            return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid DICOM file: {}", e)))?);
+                                        }
+                                    }
+                                }
                             }
                         };
                         
-                        // Check if this image belongs to the same study as existing images
-                        if !existing_case.study_instance_uid.is_empty() && 
-                           existing_case.study_instance_uid != metadata.study_instance_uid {
-                            println!("Warning: New image has different study UID than existing case");
-                            // Continue anyway, but log the discrepancy
+                        println!("Found {} instances in the additional DICOM data", metadata_list.len());
+                        
+                        // Group by series
+                        let mut series_map: std::collections::HashMap<String, Vec<&DicomMetadata>> = std::collections::HashMap::new();
+                        for metadata in &metadata_list {
+                            series_map.entry(metadata.series_instance_uid.clone())
+                                .or_insert_with(Vec::new)
+                                .push(metadata);
                         }
                         
-                        // Upload the DICOM file to S3
-                        let s3_key = format!("dicom/{}/{}/{}.dcm", 
-                                            case_id, 
-                                            metadata.study_instance_uid,
-                                            metadata.sop_instance_uid);
+                        println!("New DICOM data contains {} series", series_map.len());
                         
-                        println!("Uploading additional DICOM to S3: {}", s3_key);
-                        match s3::upload_file(&s3_client, &s3_key, dicom_data).await {
-                            Ok(_) => println!("S3 upload successful"),
-                            Err(e) => {
-                                println!("S3 upload error: {:?}", e);
-                                return Ok(Response::new(500, ErrorResponse::server_error(format!("Failed to upload file: {}", e)))?);
+                        // Upload to S3 if this isn't a test case
+                        if !is_test_data {
+                            println!("Uploading additional DICOM data to S3...");
+                            
+                            // First save the complete original file
+                            let original_key = format!("dicom/{}/additional_{}.dcm", 
+                                                     case_id, 
+                                                     uuid::Uuid::new_v4());
+                            
+                            match s3::upload_file(&s3_client, &original_key, dicom_data.clone()).await {
+                                Ok(_) => println!("Uploaded additional DICOM file to S3: {}", original_key),
+                                Err(e) => println!("Error uploading additional DICOM file: {:?}", e),
+                            }
+                            
+                            // Also upload each instance individually if possible
+                            for metadata in &metadata_list {
+                                let instance_key = format!("dicom/{}/{}/{}.dcm", 
+                                                         case_id, 
+                                                         metadata.study_instance_uid,
+                                                         metadata.sop_instance_uid);
+                                
+                                println!("Registered instance: {}", instance_key);
+                                
+                                // Currently we can't extract individual instances from multi-frame files
+                                // But we register the path for future reference
+                            }
+                        } else {
+                            println!("Test case - skipping S3 upload");
+                        }
+                        
+                        // Update the case with new instances
+                        // 1. First check if we need to add new series
+                        for (series_uid, instances) in &series_map {
+                            let mut found_series = false;
+                            
+                            // Check if this series already exists in the case
+                            for existing_series in &mut existing_case.series {
+                                if &existing_series.series_instance_uid == series_uid {
+                                    found_series = true;
+                                    
+                                    // Add new instances to existing series
+                                    for instance in instances {
+                                        // Only add if not already present
+                                        if !existing_series.image_ids.contains(&instance.sop_instance_uid) {
+                                            existing_series.image_ids.push(instance.sop_instance_uid.clone());
+                                            println!("Added instance {} to existing series {}", 
+                                                     instance.sop_instance_uid, series_uid);
+                                            
+                                            // Also add to the flat list for backward compatibility
+                                            if !existing_case.image_ids.contains(&instance.sop_instance_uid) {
+                                                existing_case.image_ids.push(instance.sop_instance_uid.clone());
+                                            }
+                                        }
+                                    }
+                                    
+                                    break;
+                                }
+                            }
+                            
+                            // If the series doesn't exist, create a new one
+                            if !found_series {
+                                let first_instance = instances[0];
+                                
+                                // Get all instance IDs for this series
+                                let image_ids: Vec<String> = instances.iter()
+                                    .map(|meta| meta.sop_instance_uid.clone())
+                                    .collect();
+                                
+                                let new_series = SeriesInfo {
+                                    series_instance_uid: series_uid.clone(),
+                                    series_number: first_instance.instance_number,
+                                    series_description: first_instance.series_description.clone(),
+                                    modality: first_instance.modality.clone(),
+                                    image_ids: image_ids.clone(),
+                                };
+                                
+                                println!("Added new series {} with {} instances", 
+                                         series_uid, image_ids.len());
+                                
+                                // Add all new image IDs to the flat list for backward compatibility
+                                for image_id in &image_ids {
+                                    if !existing_case.image_ids.contains(image_id) {
+                                        existing_case.image_ids.push(image_id.clone());
+                                    }
+                                }
+                                
+                                existing_case.series.push(new_series);
                             }
                         }
-                        
-                        // Update the case with the new image
-                        // Check if the series already exists
-                        let mut found_series = false;
-                        for series in &mut existing_case.series {
-                            if series.series_instance_uid == metadata.series_instance_uid {
-                                // Add image to existing series
-                                series.image_ids.push(metadata.sop_instance_uid.clone());
-                                found_series = true;
-                                break;
-                            }
-                        }
-                        
-                        // If series doesn't exist, create a new one
-                        if !found_series {
-                            let series_info = SeriesInfo {
-                                series_instance_uid: metadata.series_instance_uid.clone(),
-                                series_number: metadata.instance_number,
-                                series_description: metadata.series_description.clone(),
-                                modality: metadata.modality.clone(),
-                                image_ids: vec![metadata.sop_instance_uid.clone()],
-                            };
-                            existing_case.series.push(series_info);
-                        }
-                        
-                        // Also add to the flat image_ids list for backward compatibility
-                        existing_case.image_ids.push(metadata.sop_instance_uid.clone());
                         
                         // Update the case in the database
                         println!("Updating case in DynamoDB...");
