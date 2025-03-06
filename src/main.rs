@@ -5,6 +5,8 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
 use tracing::{error, info};
+use aws_sdk_xray::Client as XRayClient;
+use aws_sdk_xray::config::Config as XRayConfig;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
 
@@ -191,14 +193,14 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
         },
         ("GET", path) if path.starts_with("/api/cases/") => {
             let case_id = path.trim_start_matches("/api/cases/");
-            println!("Fetching case by ID: {}", case_id);
+            info!("Fetching case by ID: {}", case_id);
             
             match db::get_case(&dynamodb_client, case_id).await? {
                 Some(case) => {
                     Ok(Response::new(200, ApiResponse::success(case))?)
                 },
                 None => {
-                    println!("Case not found: {}", case_id);
+                    error!("Case not found: {}", case_id);
                     Ok(Response::new(404, ErrorResponse::not_found(&format!("Case not found: {}", case_id)))?)
                 }
             }
@@ -211,7 +213,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 let case_id = path_parts[3];
                 let sop_instance_uid = path_parts.get(4).unwrap_or(&"");
                 
-                println!("Fetching DICOM file: case={}, sop={}", case_id, sop_instance_uid);
+                info!("Fetching DICOM file: case={}, sop={}", case_id, sop_instance_uid);
                 
                 // Get the case to find the correct study_instance_uid for more structured S3 path
                 match db::get_case(&dynamodb_client, case_id).await? {
@@ -225,7 +227,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         
                         match s3::download_file(&s3_client, &s3_key).await {
                             Ok(dicom_data) => {
-                                println!("Successfully downloaded DICOM from S3: {}", s3_key);
+                                info!("Successfully downloaded DICOM from S3: {}", s3_key);
                                 
                                 let mut response = Response::new(200, "")?;
                                 response = response.with_content_type("application/dicom");
@@ -775,13 +777,13 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     }
                 },
                 None => {
-                    println!("Case not found: {}", case_id);
+                    error!("Case not found: {}", case_id);
                     Ok(Response::new(404, ErrorResponse::not_found(&format!("Case not found: {}", case_id)))?)
                 }
             }
         },
         _ => {
-            println!("Route not found: {} {}", http_method, path);
+            error!("Route not found: {} {}", http_method, path);
             Ok(Response::new(404, ErrorResponse::not_found("Route not found"))?)
         }
     };
@@ -790,13 +792,39 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
 }
 
 #[tokio::main]
+// async fn main() -> Result<(), LambdaError> {
+//     tracing_subscriber::fmt()
+//         .with_ansi(false)
+//         .without_time()
+//         .with_max_level(tracing::Level::INFO)
+//         .init();
+
+//     let config = aws_config::load_from_env().await;
+//     let dynamodb_client = DynamoDbClient::new(&config);
+//     let s3_client = S3Client::new(&config);
+
+//     if let Err(err) = db::ensure_table_exists(&dynamodb_client).await {
+//         error!("Failed to ensure DynamoDB table exists: {:?}", err);
+//     }
+
+//     if let Err(err) = s3::ensure_bucket_exists(&s3_client).await {
+//         error!("Failed to ensure S3 bucket exists: {:?}", err);
+//     }
+
+//     run(service_fn(function_handler)).await
+// }
 async fn main() -> Result<(), LambdaError> {
+    // Initialize tracing
     tracing_subscriber::fmt()
         .with_ansi(false)
         .without_time()
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    // Initialize AWS X-Ray SDK
+    aws_xray_sdk::init_xray_recorder(Default::default()).expect("Failed to initialize X-Ray");
+    
+    // Set up AWS clients
     let config = aws_config::load_from_env().await;
     let dynamodb_client = DynamoDbClient::new(&config);
     let s3_client = S3Client::new(&config);
@@ -809,5 +837,6 @@ async fn main() -> Result<(), LambdaError> {
         error!("Failed to ensure S3 bucket exists: {:?}", err);
     }
 
+    // Run the Lambda service
     run(service_fn(function_handler)).await
 }
