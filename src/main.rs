@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
-use tracing::error;
+use tracing::{error, info};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
 
@@ -105,7 +105,7 @@ impl Response {
 async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, LambdaError> {
     let bucket_name = env::var("S3_BUCKET").unwrap_or_else(|_| "radiology-teaching-files".to_string());
     let key = format!("frontend/{}", path.trim_start_matches('/'));
-    println!("Serving frontend file: {}/{}", bucket_name, key);
+    info!("Serving frontend file: {}/{}", bucket_name, key);
     
     match s3_client.get_object()
         .bucket(bucket_name)
@@ -137,14 +137,14 @@ async fn serve_frontend(s3_client: &S3Client, path: &str) -> Result<Response, La
             })
         }
         Err(e) => {
-            println!("Frontend file read error: {:?} - {}", key, e);
+            error!("Frontend file read error: {:?} - {}", key, e);
             Ok(Response::new(404, "File Not Found")?)
         }
     }
 }
 
 async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, LambdaError> {
-    println!("FULL EVENT DUMP: {:?}", event);
+    info!("FULL EVENT DUMP: {:?}", event);
     
     let request = event.payload;
     let config = aws_config::load_from_env().await;
@@ -166,7 +166,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                 .and_then(|http| http.path.clone())))
         .unwrap_or_else(|| "/".to_string());
 
-    println!("PROCESSED REQUEST: method={}, path={}", http_method, path);
+    info!("PROCESSED REQUEST: method={}, path={}", http_method, path);
 
     // Handle OPTIONS request with proper CORS headers
     if http_method.as_str() == "OPTIONS" {
