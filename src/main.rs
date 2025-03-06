@@ -5,8 +5,8 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
 use tracing::{error, info};
-use aws_sdk_xray::Client as XRayClient;
-use aws_sdk_xray::config::Config as XRayConfig;
+//use aws_sdk_xray::Client as XRayClient;
+//use aws_sdk_xray::config::Config as XRayConfig;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
 
@@ -822,7 +822,7 @@ async fn main() -> Result<(), LambdaError> {
         .init();
 
     // Initialize AWS X-Ray SDK
-    aws_xray_sdk::init_xray_recorder(Default::default()).expect("Failed to initialize X-Ray");
+    //aws_xray_sdk::init_xray_recorder(Default::default()).expect("Failed to initialize X-Ray");
     
     // Set up AWS clients
     let config = aws_config::load_from_env().await;
