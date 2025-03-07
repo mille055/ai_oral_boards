@@ -436,7 +436,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     }
                 };
                 
-                println!("DICOM processing complete. Found {} instances/series", metadata_list.len());
+                info!("DICOM processing complete. Found {} instances/series", metadata_list.len());
                 
                 let case_id = uuid::Uuid::new_v4().to_string();
                 
@@ -448,19 +448,19 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         .push(metadata);
                 }
                 
-                println!("Organized into {} unique series", series_map.len());
+                info!("Organized into {} unique series", series_map.len());
                 
                 // Upload to S3 if this isn't a test case
                 if !is_test_data {
-                    println!("Uploading DICOM data to S3...");
+                    info!("Uploading DICOM data to S3...");
                     
                     // First save the complete original file (important for multi-series data)
                     let original_key = format!("dicom/{}/original.dcm", case_id);
                     
                     // Upload the original file
                     match s3::upload_file(&s3_client, &original_key, dicom_data.clone()).await {
-                        Ok(_) => println!("Uploaded original DICOM file to S3: {}", original_key),
-                        Err(e) => println!("Error uploading original DICOM file: {:?}", e),
+                        Ok(_) => info!("Uploaded original DICOM file to S3: {}", original_key),
+                        Err(e) => error!("Error uploading original DICOM file: {:?}", e),
                     }
                     
                     // If we have multiple instances identified, try to split and save them separately too
@@ -473,11 +473,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         
                         // For now, just link to the original file since we can't extract each instance yet
                         // In the future, we'd need a way to extract individual DICOM instances
-                        println!("Registered instance in database: {}", instance_key);
+                        info!("Registered instance in database: {}", instance_key);
                     }
                     
                 } else {
-                    println!("Test case - skipping S3 upload");
+                    info!("Test case - skipping S3 upload");
                 }
                 
                 // Create SeriesInfo objects for each series
@@ -540,16 +540,16 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     series: series_info_list,
                 };
                 
-                println!("Saving case to DynamoDB...");
+                info!("Saving case to DynamoDB...");
                 match db::save_case(&dynamodb_client, &case).await {
-                    Ok(_) => println!("DynamoDB save successful"),
-                    Err(e) => println!("DynamoDB save error: {:?}", e),
+                    Ok(_) => info!("DynamoDB save successful"),
+                    Err(e) => error!("DynamoDB save error: {:?}", e),
                 }
                 
-                println!("Returning success response");
+                info!("Returning success response");
                 Ok(Response::new(201, ApiResponse::success(case))?)
             } else {
-                println!("Missing request body in POST");
+                error!("Missing request body in POST");
                 Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
             }
         },
@@ -562,14 +562,14 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
             }
             
             let case_id = parts[3];
-            println!("Adding images to case: {}", case_id);
+            info!("Adding images to case: {}", case_id);
             
             // Verify the case exists
             match db::get_case(&dynamodb_client, case_id).await? {
                 Some(mut existing_case) => {
                     // Case exists, now process the uploaded file
                     if let Some(body) = request.body {
-                        println!("Received request to add image to case: {}", case_id);
+                        info!("Received request to add image to case: {}", case_id);
                         
                         // Parse the upload data
                         #[derive(Deserialize)]
@@ -581,7 +581,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         let image_upload: ImageUpload = match serde_json::from_str(&body) {
                             Ok(upload) => upload,
                             Err(e) => {
-                                println!("Error parsing image upload JSON: {:?}", e);
+                                error!("Error parsing image upload JSON: {:?}", e);
                                 return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid JSON: {}", e)))?);
                             }
                         };
@@ -592,24 +592,24 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                            image_upload.dicom_file.starts_with("AA");
                         
                         // Ensure the DICOM directory exists
-                        println!("Ensuring DICOM directory exists in /tmp");
+                        info!("Ensuring DICOM directory exists in /tmp");
                         match dicom::ensure_dicom_dir_exists() {
-                            Ok(dir) => println!("DICOM directory: {}", dir),
-                            Err(e) => println!("Warning: Failed to create DICOM directory: {:?}", e)
+                            Ok(dir) => info!("DICOM directory: {}", dir),
+                            Err(e) => error!("Warning: Failed to create DICOM directory: {:?}", e)
                         }
                         
                         // Decode the base64 data
                         let dicom_data = if is_test_data {
-                            println!("Detected test data, using dummy data");
+                            info!("Detected test data, using dummy data");
                             vec![0u8; 10]
                         } else {
                             match BASE64.decode(&image_upload.dicom_file) {
                                 Ok(data) => {
-                                    println!("Successfully decoded base64 data. Size: {} bytes", data.len());
+                                    info!("Successfully decoded base64 data. Size: {} bytes", data.len());
                                     data
                                 },
                                 Err(e) => {
-                                    println!("Error decoding base64: {:?}", e);
+                                    error!("Error decoding base64: {:?}", e);
                                     return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid base64 encoding: {}", e)))?);
                                 }
                             }
@@ -636,20 +636,20 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                             // For real data, process all series in the study
                             match dicom::process_study_data(&dicom_data) {
                                 Ok(metadata_vec) => {
-                                    println!("Successfully extracted metadata for {} instances", metadata_vec.len());
+                                    info!("Successfully extracted metadata for {} instances", metadata_vec.len());
                                     metadata_vec
                                 },
                                 Err(e) => {
-                                    println!("Error processing DICOM study: {:?}", e);
+                                    error!("Error processing DICOM study: {:?}", e);
                                     
                                     // Fallback to single extraction
                                     match dicom::extract_metadata(&dicom_data) {
                                         Ok(metadata) => {
-                                            println!("Successfully extracted basic metadata");
+                                            info!("Successfully extracted basic metadata");
                                             vec![metadata]
                                         },
                                         Err(e) => {
-                                            println!("Error extracting metadata: {:?}", e);
+                                            error!("Error extracting metadata: {:?}", e);
                                             return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid DICOM file: {}", e)))?);
                                         }
                                     }
@@ -657,7 +657,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                             }
                         };
                         
-                        println!("Found {} instances in the additional DICOM data", metadata_list.len());
+                        info!("Found {} instances in the additional DICOM data", metadata_list.len());
                         
                         // Group by series
                         let mut series_map: std::collections::HashMap<String, Vec<&DicomMetadata>> = std::collections::HashMap::new();
@@ -667,11 +667,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                 .push(metadata);
                         }
                         
-                        println!("New DICOM data contains {} series", series_map.len());
+                        info!("New DICOM data contains {} series", series_map.len());
                         
                         // Upload to S3 if this isn't a test case
                         if !is_test_data {
-                            println!("Uploading additional DICOM data to S3...");
+                            info!("Uploading additional DICOM data to S3...");
                             
                             // First save the complete original file
                             let original_key = format!("dicom/{}/additional_{}.dcm", 
@@ -679,8 +679,8 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                                      uuid::Uuid::new_v4());
                             
                             match s3::upload_file(&s3_client, &original_key, dicom_data.clone()).await {
-                                Ok(_) => println!("Uploaded additional DICOM file to S3: {}", original_key),
-                                Err(e) => println!("Error uploading additional DICOM file: {:?}", e),
+                                Ok(_) => info!("Uploaded additional DICOM file to S3: {}", original_key),
+                                Err(e) => error!("Error uploading additional DICOM file: {:?}", e),
                             }
                             
                             // Also upload each instance individually if possible
@@ -690,13 +690,13 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                                          metadata.study_instance_uid,
                                                          metadata.sop_instance_uid);
                                 
-                                println!("Registered instance: {}", instance_key);
+                                info!("Registered instance: {}", instance_key);
                                 
                                 // Currently we can't extract individual instances from multi-frame files
                                 // But we register the path for future reference
                             }
                         } else {
-                            println!("Test case - skipping S3 upload");
+                            info!("Test case - skipping S3 upload");
                         }
                         
                         // Update the case with new instances
@@ -714,7 +714,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                         // Only add if not already present
                                         if !existing_series.image_ids.contains(&instance.sop_instance_uid) {
                                             existing_series.image_ids.push(instance.sop_instance_uid.clone());
-                                            println!("Added instance {} to existing series {}", 
+                                            info!("Added instance {} to existing series {}", 
                                                      instance.sop_instance_uid, series_uid);
                                             
                                             // Also add to the flat list for backward compatibility
@@ -745,7 +745,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                     image_ids: image_ids.clone(),
                                 };
                                 
-                                println!("Added new series {} with {} instances", 
+                                info!("Added new series {} with {} instances", 
                                          series_uid, image_ids.len());
                                 
                                 // Add all new image IDs to the flat list for backward compatibility
@@ -760,11 +760,11 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         }
                         
                         // Update the case in the database
-                        println!("Updating case in DynamoDB...");
+                        info!("Updating case in DynamoDB...");
                         match db::save_case(&dynamodb_client, &existing_case).await {
                             Ok(_) => println!("DynamoDB update successful"),
                             Err(e) => {
-                                println!("DynamoDB update error: {:?}", e);
+                                error!("DynamoDB update error: {:?}", e);
                                 return Ok(Response::new(500, ErrorResponse::server_error(format!("Failed to update case: {}", e)))?);
                             }
                         }
@@ -772,7 +772,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         // Return success response with updated case
                         Ok(Response::new(200, ApiResponse::success(existing_case))?)
                     } else {
-                        println!("Missing request body for image upload");
+                        error!("Missing request body for image upload");
                         Ok(Response::new(400, ErrorResponse::bad_request("Missing request body"))?)
                     }
                 },
