@@ -236,14 +236,14 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                 Ok(response)
                             },
                             Err(e) => {
-                                println!("Error downloading DICOM from S3: {:?}", e);
-                                println!("Trying alternate S3 path...");
+                                error!("Error downloading DICOM from S3: {:?}", e);
+                                error!("Trying alternate S3 path...");
                                 
                                 // Try the original file as fallback
                                 let fallback_key = format!("dicom/{}/original.dcm", case_id);
                                 match s3::download_file(&s3_client, &fallback_key).await {
                                     Ok(dicom_data) => {
-                                        println!("Successfully downloaded DICOM from original file: {}", fallback_key);
+                                        info!("Successfully downloaded DICOM from original file: {}", fallback_key);
                                         
                                         let mut response = Response::new(200, "")?;
                                         response = response.with_content_type("application/dicom");
@@ -252,13 +252,13 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                         Ok(response)
                                     },
                                     Err(e) => {
-                                        println!("Error downloading original DICOM: {:?}", e);
+                                        error!("Error downloading original DICOM: {:?}", e);
                                         
                                         // Try the simple path as a last resort
                                         let simple_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
                                         match s3::download_file(&s3_client, &simple_key).await {
                                             Ok(dicom_data) => {
-                                                println!("Successfully downloaded DICOM from simple path: {}", simple_key);
+                                                info!("Successfully downloaded DICOM from simple path: {}", simple_key);
                                                 
                                                 let mut response = Response::new(200, "")?;
                                                 response = response.with_content_type("application/dicom");
@@ -762,7 +762,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         // Update the case in the database
                         info!("Updating case in DynamoDB...");
                         match db::save_case(&dynamodb_client, &existing_case).await {
-                            Ok(_) => println!("DynamoDB update successful"),
+                            Ok(_) => info!("DynamoDB update successful"),
                             Err(e) => {
                                 error!("DynamoDB update error: {:?}", e);
                                 return Ok(Response::new(500, ErrorResponse::server_error(format!("Failed to update case: {}", e)))?);
