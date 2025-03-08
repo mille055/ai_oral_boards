@@ -36,6 +36,7 @@ Before setting up, ensure you have:
 ![png](assets/upload2success.png)
 ![png](assets/dbconsole2.png)
 ![png](assets/logging.png)
+![png](assets/tracing.png)
 
 ---
 The interface can be found at [https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html](https://radiology-teaching-files.s3.amazonaws.com/frontend/index.html). As of right now, the image viewer is not fully deployed,but the components for this miniproject of a rust lambda microservice communicating with a DynamoDB database has been deployed.
