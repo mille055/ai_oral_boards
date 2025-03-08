@@ -5,10 +5,17 @@ use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
 use anyhow::Result;
 use tracing::{error, info};
-//use aws_sdk_xray::Client as XRayClient;
-//use aws_sdk_xray::config::Config as XRayConfig;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
+//use aws_xray_sdk::XRayRecorder;
+//use tracing_opentelemetry::OpenTelemetryLayer;
+//use opentelemetry::sdk::trace as sdktrace;
+//use opentelemetry_aws::XrayIdGenerator;
+use opentelemetry::global;
+use opentelemetry_sdk::trace as sdktrace;
+use opentelemetry::trace::TracerProvider;
+use opentelemetry_aws::trace::XrayIdGenerator;
+
 
 mod db;
 mod s3;
@@ -58,6 +65,19 @@ struct Response {
     #[serde(rename = "isBase64Encoded")]
     is_base64_encoded: bool,
     body: String,
+}
+
+// Initialize AWS X-Ray SDK
+fn init_xray() {
+    // Create a new OpenTelemetry X-Ray pipeline
+    let provider = sdktrace::TracerProvider::builder()
+        .with_config(sdktrace::Config::default())
+        .with_simple_exporter(opentelemetry_aws::trace::new_pipeline().install_simple().unwrap())
+        .with_id_generator(XrayIdGenerator::default())
+        .build();
+
+    // Set the global tracer provider
+    global::set_tracer_provider(provider);
 }
 
 // Add function to create CORS headers
@@ -823,7 +843,8 @@ async fn main() -> Result<(), LambdaError> {
 
     // Initialize AWS X-Ray SDK
     //aws_xray_sdk::init_xray_recorder(Default::default()).expect("Failed to initialize X-Ray");
-    
+    init_xray();
+
     // Set up AWS clients
     let config = aws_config::load_from_env().await;
     let dynamodb_client = DynamoDbClient::new(&config);
