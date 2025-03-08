@@ -294,24 +294,25 @@ pub async fn ensure_table_exists(client: &Client) -> Result<()> {
                     AttributeDefinition, KeySchemaElement, KeyType, ScalarAttributeType, BillingMode,
                 };
 
-                let key_schema = KeySchemaElement::builder()
-                    .attribute_name("case_id")
+                let key_schema_element = KeySchemaElement::builder()
+                    .attribute_name("your_key_name")
                     .key_type(KeyType::Hash)
-                    .build(); // No `.context()` needed
+                    .build()?;  // ✅ FIXED: Extracts the result properly
 
-                let attribute_def = AttributeDefinition::builder()
-                    .attribute_name("case_id")
+                let attribute_definition = AttributeDefinition::builder()
+                    .attribute_name("your_attr_name")
                     .attribute_type(ScalarAttributeType::S)
-                    .build(); // No `.context()` needed
+                    .build()?;  // ✅ FIXED: Extracts the result properly
 
                 client.create_table()
                     .table_name(TABLE_NAME)
-                    .key_schema(key_schema)
-                    .attribute_definitions(attribute_def)
+                    .key_schema(key_schema_element)  // ✅ Use correct variable name
+                    .attribute_definitions(attribute_definition)  // ✅ Use correct variable name
                     .billing_mode(BillingMode::PayPerRequest)
                     .send()
                     .await
                     .context("Failed to create DynamoDB table")?;
+                
 
                 info!("Table created successfully: {}", TABLE_NAME);
 

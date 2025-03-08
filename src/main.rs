@@ -3,19 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_xray::{error, Client as XRayClient};
 use anyhow::Result;
-use tracing::{error, info};
+use tracing::{error, info, debug, warn};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use std::env;
-//use aws_xray_sdk::XRayRecorder;
-//use tracing_opentelemetry::OpenTelemetryLayer;
-//use opentelemetry::sdk::trace as sdktrace;
-//use opentelemetry_aws::XrayIdGenerator;
-use opentelemetry::global;
-use opentelemetry_sdk::trace as sdktrace;
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_aws::trace::XrayIdGenerator;
-
+use chrono::Utc;
+use uuid::Uuid;
 
 mod db;
 mod s3;
@@ -67,18 +61,50 @@ struct Response {
     body: String,
 }
 
-// Initialize AWS X-Ray SDK
+/// Initialize X-Ray environment variables
 fn init_xray() {
-    // Create a new OpenTelemetry X-Ray pipeline
-    let provider = sdktrace::TracerProvider::builder()
-        .with_config(sdktrace::Config::default())
-        .with_simple_exporter(opentelemetry_aws::trace::new_pipeline().install_simple().unwrap())
-        .with_id_generator(XrayIdGenerator::default())
-        .build();
-
-    // Set the global tracer provider
-    global::set_tracer_provider(provider);
+    if std::env::var("AWS_XRAY_DAEMON_ADDRESS").is_err() {
+        std::env::set_var("AWS_XRAY_DAEMON_ADDRESS", "127.0.0.1:2000");
+    }
+    
+    if std::env::var("AWS_XRAY_CONTEXT_MISSING").is_err() {
+        std::env::set_var("AWS_XRAY_CONTEXT_MISSING", "LOG_ERROR");
+    }
+    
+    tracing::info!("X-Ray environment variables configured");
 }
+
+// Send an X-Ray trace segment
+async fn send_xray_trace(xray_client: &XRayClient, name: &str) {
+    let timestamp = Utc::now().timestamp_millis() as f64 / 1000.0;
+    let segment_id = Uuid::new_v4().to_string().chars().take(16).collect::<String>();
+
+    let trace_segment = format!(
+        r#"{{
+            "name": "{}",
+            "id": "{}",
+            "start_time": {},
+            "end_time": {},
+            "in_progress": false,
+            "service": {{
+                "version": "1.0.0",
+                "name": "radiology-teaching-files"
+            }}
+        }}"#, 
+        name,
+        segment_id,
+        timestamp,
+        timestamp + 0.001
+    );
+
+    match xray_client.put_trace_segments()
+        .trace_segment_documents(trace_segment)
+        .send().await {
+        Ok(_) => tracing::info!("X-Ray trace sent for {}", name),
+        Err(e) => tracing::error!("Failed to send X-Ray trace for {}: {:?}", name, e),
+    }
+}
+
 
 // Add function to create CORS headers
 fn create_cors_headers() -> HashMap<String, String> {
@@ -287,7 +313,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                                 Ok(response)
                                             },
                                             Err(e) => {
-                                                println!("Error downloading from simple path: {:?}", e);
+                                                error!("Error downloading from simple path: {:?}", e);
                                                 Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
                                             }
                                         }
@@ -297,12 +323,12 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         }
                     },
                     None => {
-                        println!("Case not found for DICOM retrieval: {}", case_id);
+                        warn!("Case not found for DICOM retrieval: {}", case_id);
                         // Try direct S3 path without case lookup
                         let direct_key = format!("dicom/{}/{}.dcm", case_id, sop_instance_uid);
                         match s3::download_file(&s3_client, &direct_key).await {
                             Ok(dicom_data) => {
-                                println!("Successfully downloaded DICOM using direct path: {}", direct_key);
+                                debug!("Successfully downloaded DICOM using direct path: {}", direct_key);
                                 
                                 let mut response = Response::new(200, "")?;
                                 response = response.with_content_type("application/dicom");
@@ -311,7 +337,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                                 Ok(response)
                             },
                             Err(e) => {
-                                println!("Error downloading DICOM using direct path: {:?}", e);
+                                error!("Error downloading DICOM using direct path: {:?}", e);
                                 Ok(Response::new(404, ErrorResponse::not_found("DICOM file not found"))?)
                             }
                         }
@@ -342,7 +368,7 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                         upload
                     },
                     Err(e) => {
-                        println!("ERROR: Failed to parse JSON: {:?}", e);
+                        error!("ERROR: Failed to parse JSON: {:?}", e);
                         return Ok(Response::new(400, ErrorResponse::bad_request(&format!("Invalid JSON: {}", e)))?);
                     }
                 };
@@ -355,8 +381,8 @@ async fn function_handler(event: LambdaEvent<Request>) -> Result<Response, Lambd
                     vec![0u8; 10] // Dummy data
                 } else {
                     // Regular processing for real DICOM files
-                    println!("Processing real DICOM file");
-                    println!("DICOM file base64 length: {}", case_upload.dicom_file.len());
+                    info!("Processing real DICOM file");
+                    debug!("DICOM file base64 length: {}", case_upload.dicom_file.len());
                 
                     // Decode the base64 data
                     match BASE64.decode(&case_upload.dicom_file) {
@@ -842,14 +868,15 @@ async fn main() -> Result<(), LambdaError> {
         .init();
 
     // Initialize AWS X-Ray SDK
-    //aws_xray_sdk::init_xray_recorder(Default::default()).expect("Failed to initialize X-Ray");
     init_xray();
 
     // Set up AWS clients
     let config = aws_config::load_from_env().await;
-    let dynamodb_client = DynamoDbClient::new(&config);
-    let s3_client = S3Client::new(&config);
+    let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
+    let s3_client = aws_sdk_s3::Client::new(&config);
+    let xray_client = aws_sdk_xray::Client::new(&config);
 
+    
     if let Err(err) = db::ensure_table_exists(&dynamodb_client).await {
         error!("Failed to ensure DynamoDB table exists: {:?}", err);
     }
@@ -858,6 +885,8 @@ async fn main() -> Result<(), LambdaError> {
         error!("Failed to ensure S3 bucket exists: {:?}", err);
     }
 
+    // Send X-Ray trace for Lambda startup
+    send_xray_trace(&xray_client, "lambda-startup").await;
     // Run the Lambda service
     run(service_fn(function_handler)).await
 }
