@@ -1,7 +1,7 @@
 # Radiology Teaching Files - Rust Lambda Microservice
 
 ## 📌 Overview
-This project is a **Rust-based AWS Lambda microservice** that processes DICOM images with user defined tags and diagnoses to create a teaching file. It includes a **backend** built in Rust, designed to run efficiently on **AWS Lambda** as well as a frontend consisting of javascript files. It also includes tracing and logging (miniproject6 in addition to miniproject5).
+This project is a **Rust-based AWS Lambda microservice** that processes DICOM images with user defined tags and diagnoses to create a teaching file. It includes a **backend** built in Rust, designed to run efficiently on **AWS Lambda** as well as a frontend consisting of javascript files. It is the individual project #2 (but builds upon mini-projects 5 and 6).
 
 ### Features:
 - 🚀 **Serverless Rust microservice** for efficient handling of radiology files.
