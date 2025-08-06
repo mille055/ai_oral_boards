@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Simple DICOM + Image Viewer</title>
+
+  <!-- Cornerstone and dependencies -->
+  <script src="https://unpkg.com/cornerstone-core@2.4.0/dist/cornerstone.min.js"></script>
+  <script src="https://unpkg.com/cornerstone-wado-image-loader@4.2.0/dist/cornerstoneWADOImageLoader.min.js"></script>
+  <script src="https://unpkg.com/cornerstone-tools@4.22.2/dist/cornerstoneTools.min.js"></script>
+  <script src="https://unpkg.com/dicom-parser@1.8.6/dist/dicomParser.min.js"></script>
+
+  <style>
+    body {
+      background-color: #000;
+      color: white;
+      text-align: center;
+      font-family: sans-serif;
+    }
+    #dicomImage {
+      width: 512px;
+      height: 512px;
+      margin: 2rem auto;
+      background-color: black;
+      border: 1px solid #888;
+      display: none;
+    }
+    #fallbackImage {
+      max-width: 512px;
+      margin: 2rem auto;
+      display: none;
+    }
+    input[type="text"], input[type="file"] {
+      margin-top: 1rem;
+      padding: 0.5rem;
+      width: 80%;
+    }
+    button {
+      margin: 1rem;
+      padding: 0.5rem 1rem;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>🩻 DICOM + Image Viewer</h2>
+
+  <input type="text" id="dicomUrl" placeholder="Enter S3 or HTTPS URL..." />
+  <br>
+  <button onclick="loadDicom()">Load Remote</button>
+
+  <br><br>
+
+  <input type="file" id="dicomFile" multiple webkitdirectory />
+  <br>
+  <button onclick="loadLocal()">Load Folder</button>
+
+  <div id="dicomImage"></div>
+  <img id="fallbackImage" />
+
+  <script>
+    const element = document.getElementById('dicomImage');
+    const fallbackImage = document.getElementById('fallbackImage');
+
+    cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
+    cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
+    cornerstone.enable(element);
+
+    cornerstoneTools.init();
+    cornerstoneTools.addTool(cornerstoneTools.WwwcTool);
+    cornerstoneTools.addTool(cornerstoneTools.PanTool);
+    cornerstoneTools.addTool(cornerstoneTools.ZoomTool);
+    cornerstoneTools.addTool(cornerstoneTools.StackScrollMouseWheelTool);
+    cornerstoneTools.setToolActive('Wwwc', { mouseButtonMask: 1 });
+    cornerstoneTools.setToolActive('Pan', { mouseButtonMask: 2 });
+    cornerstoneTools.setToolActive('Zoom', { mouseButtonMask: 4 });
+    cornerstoneTools.setToolActive('StackScrollMouseWheel', {});
+
+    function loadDicom() {
+      const url = document.getElementById('dicomUrl').value.trim();
+      fallbackImage.style.display = 'none';
+      element.style.display = 'none';
+
+      if (!url) {
+        alert("Please enter a URL.");
+        return;
+      }
+
+      if (url.match(/\.(jpg|jpeg|png|tiff|tif)$/i)) {
+        fallbackImage.src = url;
+        fallbackImage.style.display = 'block';
+        return;
+      }
+
+      const imageId = 'wadouri:' + url;
+      element.style.display = 'block';
+
+      cornerstone.loadAndCacheImage(imageId).then(image => {
+        cornerstone.displayImage(element, image);
+      }).catch(err => {
+        console.error(err);
+        alert("Failed to load DICOM: " + err.message);
+        element.style.display = 'none';
+      });
+    }
+
+    function isDicom(file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const arr = new Uint8Array(e.target.result);
+          const isDicom = arr[128] === 0x44 && arr[129] === 0x49 && arr[130] === 0x43 && arr[131] === 0x4D;
+          resolve(isDicom);
+        };
+        reader.readAsArrayBuffer(file.slice(0, 132));
+      });
+    }
+
+    async function loadLocal() {
+      const fileInput = document.getElementById('dicomFile');
+      const files = Array.from(fileInput.files);
+      fallbackImage.style.display = 'none';
+      element.style.display = 'none';
+
+      if (files.length === 0) {
+        alert("Please select at least one file.");
+        return;
+      }
+
+      // Filter for valid DICOM files
+      const dicomFiles = [];
+      for (const file of files) {
+        const isDcm = await isDicom(file);
+        if (isDcm) dicomFiles.push(file);
+      }
+
+      if (dicomFiles.length === 0) {
+        alert("No valid DICOM files found.");
+        return;
+      }
+
+      const imageIds = dicomFiles.map(file =>
+        cornerstoneWADOImageLoader.wadouri.fileManager.add(file)
+      );
+
+      let currentImageIndex = 0;
+
+      element.style.display = 'block';
+      cornerstone.loadAndCacheImage(imageIds[currentImageIndex]).then(image => {
+        cornerstone.displayImage(element, image);
+        cornerstoneTools.addStackStateManager(element, ["stack"]);
+        cornerstoneTools.addToolState(element, "stack", {
+          currentImageIdIndex: currentImageIndex,
+          imageIds: imageIds
+        });
+      }).catch(err => {
+        console.error(err);
+        alert("Failed to load DICOM stack: " + err.message);
+      });
+    }
+  </script>
+
+</body>
+</html>
